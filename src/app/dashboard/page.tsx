@@ -330,7 +330,6 @@ export default function WorkLog() {
   const [range, setRange] = useState<string>('all');
   const [fileInput, setFileInput] = useState<File | null>(null);
   const [selectedFileName, setSelectedFileName] = useState<string>('');
-  const [isFullscreen, setIsFullscreen] = useState(false);
   const [isSquareScreen, setIsSquareScreen] = useState(false);
   const [availableMonths, setAvailableMonths] = useState<Array<{value: string, label: string}>>([]);
   const [colorPalette, setColorPalette] = useState<'colorful' | 'red' | 'green' | 'blue' | 'black' | 'white' | 'yellow' | 'orange' | 'purple'>('colorful');
@@ -765,21 +764,125 @@ export default function WorkLog() {
     }
   };
 
-  const toggleFullscreen = () => {
-    const chartContainer = document.querySelector('.chart-container');
-    if (!chartContainer) return;
-
-    if (!document.fullscreenElement) {
-      chartContainer.requestFullscreen?.();
-      setIsFullscreen(true);
-    } else {
-      document.exitFullscreen?.();
-      setIsFullscreen(false);
-    }
-  };
 
   const toggleSquareScreen = () => {
     setIsSquareScreen(!isSquareScreen);
+  };
+
+  // Sparkline component for work pattern visualization
+  const Sparkline: React.FC<{ values: number[]; height?: number; width?: number }> = ({ values, height = 32, width = 160 }) => {
+    if (!values || values.length < 2) return <div className="h-8"/>;
+    const w = width;
+    const max = Math.max(...values);
+    const min = Math.min(...values);
+    const norm = (v: number) => max === min ? height/2 : height - ((v - min) / (max - min)) * height;
+    const pts = values.map((v, i) => `${(i / (values.length - 1)) * w},${norm(v)}`).join(" ");
+    const last = values[values.length - 1];
+    return (
+      <svg viewBox={`0 0 ${w} ${height}`} width={w} height={height} className="overflow-visible">
+        <defs>
+          <linearGradient id="work-pattern-gradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#111" stopOpacity="0.3"/>
+            <stop offset="100%" stopColor="#111" stopOpacity="0"/>
+          </linearGradient>
+        </defs>
+        <polyline fill="none" stroke="#111" strokeWidth="2" points={pts} />
+        <polygon points={`0,${height} ${pts} ${w},${height}`} fill="url(#work-pattern-gradient)" opacity={0.35} />
+        <circle cx={w} cy={norm(last)} r={3.5} fill="#111" />
+      </svg>
+    );
+  };
+
+  // Work Pattern Visualization Component
+  const WorkPatternVisualization = () => {
+    if (!chartData || !csvRows.length) return null;
+
+    // Generate work pattern data for different time periods
+    const generatePatternData = (period: 'week' | 'month' | 'quarter') => {
+      const now = new Date();
+      let daysBack = 7;
+      if (period === 'month') daysBack = 30;
+      if (period === 'quarter') daysBack = 90;
+
+      const startDate = new Date(now.getTime() - (daysBack - 1) * 86400000);
+      const patternData: Record<string, number[]> = {};
+
+      // Initialize all categories
+      chartData.datasets.forEach(dataset => {
+        patternData[dataset.label] = [];
+      });
+
+      // Fill data for each day in the period
+      for (let i = 0; i < daysBack; i++) {
+        const currentDate = new Date(startDate.getTime() + i * 86400000);
+        const dateKey = currentDate.toISOString().split('T')[0];
+        
+        chartData.datasets.forEach(dataset => {
+          const dateIndex = chartData.labels.indexOf(dateKey);
+          const value = dateIndex !== -1 ? dataset.data[dateIndex] : 0;
+          patternData[dataset.label].push(value);
+        });
+      }
+
+      return patternData;
+    };
+
+    const weeklyPatterns = generatePatternData('week');
+    const monthlyPatterns = generatePatternData('month');
+
+    return (
+      <div className="bg-white rounded-2xl p-8 border border-gray-200">
+        <h3 className="text-xl font-semibold text-black mb-6 text-center">Work Pattern Visualization</h3>
+        
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* Weekly Patterns */}
+          <div>
+            <h4 className="text-lg font-medium text-gray-800 mb-4 text-center">Weekly Patterns</h4>
+            <div className="space-y-4">
+              {Object.entries(weeklyPatterns).slice(0, 6).map(([category, values]) => (
+                <div key={`weekly-${category}`} className="flex items-center gap-4">
+                  <div className="w-24 text-sm font-medium text-gray-700 truncate" title={category}>
+                    {category}
+                  </div>
+                  <div className="flex-1">
+                    <Sparkline values={values} width={200} height={28} />
+                  </div>
+                  <div className="w-16 text-xs text-gray-500 text-right">
+                    {values.reduce((sum, val) => sum + val, 0).toFixed(1)}h
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Monthly Patterns */}
+          <div>
+            <h4 className="text-lg font-medium text-gray-800 mb-4 text-center">Monthly Patterns</h4>
+            <div className="space-y-4">
+              {Object.entries(monthlyPatterns).slice(0, 6).map(([category, values]) => (
+                <div key={`monthly-${category}`} className="flex items-center gap-4">
+                  <div className="w-24 text-sm font-medium text-gray-700 truncate" title={category}>
+                    {category}
+                  </div>
+                  <div className="flex-1">
+                    <Sparkline values={values} width={200} height={28} />
+                  </div>
+                  <div className="w-16 text-xs text-gray-500 text-right">
+                    {values.reduce((sum, val) => sum + val, 0).toFixed(1)}h
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-6 text-center">
+          <p className="text-sm text-gray-500">
+            Minimalist visualization of work patterns over time • Each line shows daily activity intensity
+          </p>
+        </div>
+      </div>
+    );
   };
 
   const downloadWidget = async (type: 'monthly' | 'alltime') => {
@@ -1433,24 +1536,15 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
   );
 
   useEffect(() => {
-    const handleFullscreenChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
-    };
-
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === 'f' && chartData) {
-        toggleFullscreen();
-      }
       if (e.key.toLowerCase() === 's' && chartData) {
         toggleSquareScreen();
       }
     };
 
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
     document.addEventListener('keydown', handleKeyDown);
     
     return () => {
-      document.removeEventListener('fullscreenchange', handleFullscreenChange);
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [chartData]);
@@ -1652,20 +1746,12 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
                 )}
                 
                 {chartData && (
-                  <div className="flex gap-2">
-                    <button
-                      onClick={toggleFullscreen}
-                      className="bg-white text-black border-2 border-gray-300 rounded-xl px-4 py-3 cursor-pointer hover:bg-gray-50 hover:border-gray-400 transition-colors font-medium"
-                    >
-                      {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
-                    </button>
-                    <button
-                      onClick={toggleSquareScreen}
-                      className="bg-white text-black border-2 border-gray-300 rounded-xl px-4 py-3 cursor-pointer hover:bg-gray-50 hover:border-gray-400 transition-colors font-medium"
-                    >
-                      {isSquareScreen ? 'Exit Square Screen' : 'Square Screen'}
-                    </button>
-                  </div>
+                  <button
+                    onClick={toggleSquareScreen}
+                    className="bg-white text-black border-2 border-gray-300 rounded-xl px-4 py-3 cursor-pointer hover:bg-gray-50 hover:border-gray-400 transition-colors font-medium"
+                  >
+                    {isSquareScreen ? 'Exit Square Screen' : 'Square Screen'}
+                  </button>
                 )}
               </div>
             </div>
@@ -1716,6 +1802,9 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
                   <h3 className="text-xl font-semibold text-black mb-6">Insight Summary</h3>
                   <InsightSummaryApp analytics={insightAnalytics} rows={csvRows} />
                 </div>
+
+                {/* Work Pattern Visualization */}
+                <WorkPatternVisualization />
 
                 {/* Chart Visualization */}
                 <div className="bg-white rounded-2xl p-8 border border-gray-200">
@@ -1787,39 +1876,6 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
           box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25) !important;
         }
         
-        .chart-container:fullscreen {
-          padding: 0 !important;
-          height: 100vh !important;
-          background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%) !important;
-          display: flex !important;
-          flex-direction: column !important;
-          justify-content: center !important;
-          align-items: center !important;
-          position: relative !important;
-        }
-        
-        .chart-container:fullscreen::before {
-          content: '';
-          position: absolute;
-          top: 0;
-          left: 0;
-          right: 0;
-          height: 80px;
-          background: rgba(255, 255, 255, 0.95);
-          backdrop-filter: blur(10px);
-          border-bottom: 1px solid rgba(0, 0, 0, 0.1);
-          z-index: 10;
-        }
-        
-        .chart-container:fullscreen .echarts-for-react {
-          background: white !important;
-          border-radius: 20px !important;
-          box-shadow: 0 20px 60px rgba(0, 0, 0, 0.1) !important;
-          margin: 100px 40px 40px 40px !important;
-          padding: 20px !important;
-          width: calc(100% - 80px) !important;
-          height: calc(100% - 140px) !important;
-        }
         
         .square-screen-background {
           position: fixed;
