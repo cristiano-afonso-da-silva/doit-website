@@ -6,6 +6,8 @@ import Papa from 'papaparse';
 import Link from 'next/link';
 import Image from 'next/image';
 import InsightSummaryApp, { computeExecAnalytics, Analytics } from '../../components/InsightSummaryApp';
+import DoitExecutionSummaryCard from '../../components/DoitExecutionSummaryCard';
+import DoitExecutionSummaryParagraph from '../../components/DoitExecutionSummaryParagraph';
 
 
 // Dynamic palette will be generated based on user selection
@@ -333,6 +335,7 @@ export default function WorkLog() {
   const [isSquareScreen, setIsSquareScreen] = useState(false);
   const [availableMonths, setAvailableMonths] = useState<Array<{value: string, label: string}>>([]);
   const [colorPalette, setColorPalette] = useState<'colorful' | 'red' | 'green' | 'blue' | 'black' | 'white' | 'yellow' | 'orange' | 'purple'>('colorful');
+  const [columnNames, setColumnNames] = useState<{dateCol: string, catCol: string, valCol: string} | null>(null);
 
   // Color palette generation functions
   const generateColorPalette = (baseColor: string, count: number): string[] => {
@@ -606,6 +609,7 @@ export default function WorkLog() {
         setExecParagraph(paragraph);
         setInsightAnalytics(insightData);
         setCsvRows(parsedRows);
+        setColumnNames({ dateCol, catCol, valCol });
         setStatus(`Parsed ${data.labels.length} days • ${data.datasets.length} categories`);
       },
       error: () => {
@@ -793,99 +797,278 @@ export default function WorkLog() {
     );
   };
 
-  // Work Pattern Visualization Component
-  const WorkPatternVisualization = () => {
-    if (!chartData || !csvRows.length) return null;
+         // Work Pattern Visualization Component
+         const WorkPatternVisualization = () => {
+           const [selectedPeriod, setSelectedPeriod] = useState<string>('last30');
+           
+           if (!csvRows.length || !columnNames) return null;
 
-    // Generate work pattern data for different time periods
-    const generatePatternData = (period: 'week' | 'month' | 'quarter') => {
-      const now = new Date();
-      let daysBack = 7;
-      if (period === 'month') daysBack = 30;
-      if (period === 'quarter') daysBack = 90;
+           // Generate available months from data
+           const getAvailableMonths = () => {
+             const { dateCol } = columnNames;
+             const months = new Set<string>();
+             
+             csvRows.forEach(row => {
+               try {
+                 const rowDate = new Date(String(row[dateCol] ?? ''));
+                 if (!isNaN(rowDate.getTime())) {
+                   const monthKey = `${rowDate.getFullYear()}-${String(rowDate.getMonth() + 1).padStart(2, '0')}`;
+                   const monthName = rowDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+                   months.add(`${monthKey}|${monthName}`);
+                 }
+               } catch (error) {
+                 console.warn('Error processing date:', row[dateCol]);
+               }
+             });
+             
+             return Array.from(months).sort().map(item => {
+               const [key, name] = item.split('|');
+               return { key, name };
+             });
+           };
 
-      const startDate = new Date(now.getTime() - (daysBack - 1) * 86400000);
-      const patternData: Record<string, number[]> = {};
+           // Generate work pattern data based on selected period
+           const generatePatternData = () => {
+             const { dateCol, catCol, valCol } = columnNames;
+             
+             // Get all unique categories from the CSV data
+             const categories = new Set<string>();
+             csvRows.forEach(row => {
+               const category = String(row[catCol] ?? 'Unknown').trim() || 'Unknown';
+               categories.add(category);
+             });
 
-      // Initialize all categories
-      chartData.datasets.forEach(dataset => {
-        patternData[dataset.label] = [];
-      });
+             let dateRange: string[] = [];
+             let patternData: Record<string, number[]> = {};
+             
+             // Initialize pattern data for each category
+             categories.forEach(category => {
+               patternData[category] = [];
+             });
 
-      // Fill data for each day in the period
-      for (let i = 0; i < daysBack; i++) {
-        const currentDate = new Date(startDate.getTime() + i * 86400000);
-        const dateKey = currentDate.toISOString().split('T')[0];
-        
-        chartData.datasets.forEach(dataset => {
-          const dateIndex = chartData.labels.indexOf(dateKey);
-          const value = dateIndex !== -1 ? dataset.data[dateIndex] : 0;
-          patternData[dataset.label].push(value);
-        });
-      }
+             if (selectedPeriod === 'all') {
+               // All time - get all unique dates
+               const allDates = new Set<string>();
+               csvRows.forEach(row => {
+                 try {
+                   const rowDate = new Date(String(row[dateCol] ?? ''));
+                   if (!isNaN(rowDate.getTime())) {
+                     const dateKey = rowDate.toISOString().split('T')[0];
+                     allDates.add(dateKey);
+                   }
+                 } catch (error) {
+                   console.warn('Error processing date:', row[dateCol]);
+                 }
+               });
+               
+               dateRange = Array.from(allDates).sort();
+             } else if (selectedPeriod === 'last30') {
+               // Last 30 days
+               const now = new Date();
+               const daysBack = 30;
+               for (let i = 0; i < daysBack; i++) {
+                 const date = new Date(now.getTime() - (daysBack - 1 - i) * 86400000);
+                 dateRange.push(date.toISOString().split('T')[0]);
+               }
+    } else {
+               // Specific month
+               const [year, month] = selectedPeriod.split('-');
+               const startDate = new Date(parseInt(year), parseInt(month) - 1, 1);
+               const endDate = new Date(parseInt(year), parseInt(month), 0);
+               
+               const currentDate = new Date(startDate);
+               while (currentDate <= endDate) {
+                 dateRange.push(currentDate.toISOString().split('T')[0]);
+                 currentDate.setDate(currentDate.getDate() + 1);
+               }
+             }
 
-      return patternData;
-    };
+             // Initialize data for each day
+             dateRange.forEach(() => {
+               categories.forEach(category => {
+                 patternData[category].push(0);
+               });
+             });
 
-    const weeklyPatterns = generatePatternData('week');
-    const monthlyPatterns = generatePatternData('month');
+             // Fill in actual data
+             dateRange.forEach((dateKey, dayIndex) => {
+               csvRows.forEach(row => {
+                 try {
+                   const rowDate = new Date(String(row[dateCol] ?? ''));
+                   const rowDateKey = rowDate.toISOString().split('T')[0];
+                   
+                   if (rowDateKey === dateKey) {
+                     const category = String(row[catCol] ?? 'Unknown').trim() || 'Unknown';
+                     const hours = parseFloat(String(row[valCol] ?? '0')) || 0;
+                     
+                     if (patternData[category]) {
+                       patternData[category][dayIndex] += hours;
+                     }
+                   }
+                 } catch (error) {
+                   console.warn('Error processing row:', row, error);
+                 }
+               });
+             });
 
-    return (
-      <div className="bg-white rounded-2xl p-8 border border-gray-200">
-        <h3 className="text-xl font-semibold text-black mb-6 text-center">Work Pattern Visualization</h3>
-        
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Weekly Patterns */}
-          <div>
-            <h4 className="text-lg font-medium text-gray-800 mb-4 text-center">Weekly Patterns</h4>
-            <div className="space-y-4">
-              {Object.entries(weeklyPatterns).slice(0, 6).map(([category, values]) => (
-                <div key={`weekly-${category}`} className="flex items-center gap-4">
-                  <div className="w-24 text-sm font-medium text-gray-700 truncate" title={category}>
-                    {category}
-                  </div>
-                  <div className="flex-1">
-                    <Sparkline values={values} width={200} height={28} />
-                  </div>
-                  <div className="w-16 text-xs text-gray-500 text-right">
-                    {values.reduce((sum, val) => sum + val, 0).toFixed(1)}h
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+             return { patternData, dates: dateRange };
+           };
 
-          {/* Monthly Patterns */}
-          <div>
-            <h4 className="text-lg font-medium text-gray-800 mb-4 text-center">Monthly Patterns</h4>
-            <div className="space-y-4">
-              {Object.entries(monthlyPatterns).slice(0, 6).map(([category, values]) => (
-                <div key={`monthly-${category}`} className="flex items-center gap-4">
-                  <div className="w-24 text-sm font-medium text-gray-700 truncate" title={category}>
-                    {category}
-                  </div>
-                  <div className="flex-1">
-                    <Sparkline values={values} width={200} height={28} />
-                  </div>
-                  <div className="w-16 text-xs text-gray-500 text-right">
-                    {values.reduce((sum, val) => sum + val, 0).toFixed(1)}h
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+           const { patternData, dates } = generatePatternData();
+           const availableMonths = getAvailableMonths();
+           
+           // Fixed color palette matching widget style
+           const fixedColors = ['#4950c5', '#3d42a8', '#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899', '#f43f5e', '#ef4444', '#f97316'];
+           
+           // Prepare ECharts data
+           const series = Object.entries(patternData).map(([category, values], index) => ({
+             name: category,
+             type: 'line',
+             data: values,
+             smooth: true,
+             symbol: 'none',
+             lineStyle: {
+               width: 4,
+               color: fixedColors[index % fixedColors.length]
+             },
+             itemStyle: {
+               color: fixedColors[index % fixedColors.length]
+             },
+             areaStyle: {
+               color: {
+                 type: 'linear',
+                 x: 0,
+                 y: 0,
+                 x2: 0,
+                 y2: 1,
+                 colorStops: [
+                   {
+                     offset: 0,
+                     color: `${fixedColors[index % fixedColors.length]}40` // 25% opacity
+                   },
+                   {
+                     offset: 1,
+                     color: `${fixedColors[index % fixedColors.length]}10` // 6% opacity
+                   }
+                 ]
+               }
+             }
+           }));
 
-        <div className="mt-6 text-center">
-          <p className="text-sm text-gray-500">
-            Minimalist visualization of work patterns over time • Each line shows daily activity intensity
-          </p>
-        </div>
-      </div>
-    );
+           const workPatternChartOption = {
+             tooltip: {
+               trigger: 'axis',
+               backgroundColor: 'rgba(255, 255, 255, 0.95)',
+               borderColor: '#e5e7eb',
+               textStyle: {
+                 color: '#374151'
+               }
+             },
+             legend: {
+               show: false
+             },
+             grid: {
+               left: 0,
+               right: 0,
+               bottom: '3%',
+               top: 0,
+               containLabel: false
+             },
+             xAxis: {
+               type: 'category',
+               data: dates,
+               axisLine: {
+                 show: false
+               },
+               axisTick: {
+                 show: false
+               },
+               axisLabel: {
+                 color: '#6b7280',
+                 fontSize: 10
+               }
+             },
+             yAxis: {
+               type: 'value',
+               axisLine: {
+                 show: false
+               },
+               axisTick: {
+                 show: false
+               },
+               axisLabel: {
+                 color: '#6b7280',
+                 fontSize: 10
+               },
+               splitLine: {
+                 show: false
+               }
+             },
+             series: series
+           };
+
+           const getPeriodLabel = () => {
+             if (selectedPeriod === 'all') return 'All Time';
+             if (selectedPeriod === 'last30') return 'Last 30 Days';
+             const month = availableMonths.find(m => m.key === selectedPeriod);
+             return month ? month.name : 'Custom Period';
+           };
+
+           return (
+             <div className="h-full flex flex-col">
+               {/* ECharts Chart */}
+               <div className="flex-1 flex flex-col">
+                 <div className="bg-[#f1f2f3] py-4 px-0 h-full flex flex-col" style={{ marginTop: '10%' }}>
+                   <div className="flex justify-end mb-3 px-4">
+                     <select
+                       value={selectedPeriod}
+                       onChange={(e) => setSelectedPeriod(e.target.value)}
+                       className="px-3 py-1 text-xs font-medium rounded-lg bg-white border border-gray-200 text-gray-700 cursor-pointer hover:bg-gray-50 transition-colors"
+                     >
+                       <option value="all">All Time</option>
+                       <option value="last30">Last 30 Days</option>
+                       {availableMonths.map(month => (
+                         <option key={month.key} value={month.key}>
+                           {month.name}
+                         </option>
+                       ))}
+                     </select>
+                   </div>
+                   
+                   <div className="flex-1 w-full min-h-0">
+                     <ReactECharts
+                       option={workPatternChartOption}
+                       style={{ width: '100%', height: '100%' }}
+                     />
+                   </div>
+
+                   {/* Legend - Right below the graph */}
+                   <div className="mt-3 flex-shrink-0">
+                     <div className="flex flex-wrap gap-3 justify-center items-center">
+                       {Object.entries(patternData).map(([category, values], index) => {
+                         const color = fixedColors[index % fixedColors.length];
+                         
+                         return (
+                           <div key={category} className="flex items-center gap-2">
+                             <div 
+                               className="w-3 h-3 rounded-full" 
+                               style={{ backgroundColor: color }}
+                             />
+                             <span className="text-xs font-medium text-gray-800">
+                               {category}
+                             </span>
+                           </div>
+                         );
+                       })}
+                     </div>
+                   </div>
+                 </div>
+               </div>
+             </div>
+           );
   };
 
-  const downloadWidget = async (type: 'monthly' | 'alltime') => {
+  const downloadWidget = async (type: 'monthly' | 'alltime' | 'execution-analysis') => {
     // Try multiple approaches
     const element = document.getElementById(`${type}-widget`);
     if (!element) return;
@@ -935,15 +1118,15 @@ export default function WorkLog() {
       
       const dataUrl = await domtoimage.toPng(element, {
         quality: 1.0,
-        bgcolor: 'white',
-        width: 1600,
-        height: 1600,
+        bgcolor: 'black',
+        width: 1680,
+        height: 1680,
         style: {
-          backgroundColor: 'white',
+          backgroundColor: 'black',
           transform: 'scale(4)',
           transformOrigin: 'top left',
-          width: '400px',
-          height: '400px'
+          width: '420px',
+          height: '420px'
         },
         filter: (node: any) => {
           // Keep all elements except download buttons and close button
@@ -963,7 +1146,7 @@ export default function WorkLog() {
 
       // Download
       const link = document.createElement('a');
-      link.download = `${type}-overview.png`;
+      link.download = type === 'execution-analysis' ? 'execution-analysis.png' : `${type}-overview.png`;
       link.href = dataUrl;
       link.click();
       
@@ -997,10 +1180,10 @@ export default function WorkLog() {
 
       const canvas = await import('html2canvas').then(module => module.default);
       const dataURL = await canvas(element, {
-        background: 'white',
+        background: 'black',
         logging: false,
-        width: 1600,
-        height: 1600,
+        width: 1680,
+        height: 1680,
         useCORS: true,
         allowTaint: true
       });
@@ -1009,7 +1192,7 @@ export default function WorkLog() {
       if (closeButton) closeButton.style.display = 'flex';
 
       const link = document.createElement('a');
-      link.download = `${type}-overview.png`;
+      link.download = type === 'execution-analysis' ? 'execution-analysis.png' : `${type}-overview.png`;
       link.href = dataURL.toDataURL('image/png');
       link.click();
       
@@ -1033,10 +1216,11 @@ export default function WorkLog() {
       (element as HTMLElement).style.boxShadow = '';
     }, 3000);
 
+    const widgetPosition = type === 'monthly' ? 'left' : type === 'alltime' ? 'middle' : 'right';
     alert(`Automatic download failed. I've highlighted the ${type} widget for you.
 
 To save it manually:
-1. Right-click on the highlighted ${type === 'monthly' ? 'left' : 'right'} widget
+1. Right-click on the highlighted ${widgetPosition} widget
 2. Choose "Save image as..." or "Copy image"
 3. Or use Ctrl+Shift+S (Windows) / Cmd+Shift+4 (Mac) to screenshot
 
@@ -1086,8 +1270,8 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
       x = labels.slice(startIndex, endIdx);
     }
 
-    // Generate dynamic palette based on user selection
-    const dynamicPalette = generateColorPalette(colorPalette, datasets.length);
+    // Use the same color palette as work pattern visualization
+    const fixedPalette = ['#4950c5', '#3d42a8', '#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899', '#f43f5e', '#ef4444', '#f97316'];
     
     // Sort datasets by total values (highest first) for color assignment
     const sortedDatasets = [...datasets].map((ds, i) => ({
@@ -1100,7 +1284,7 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
     const series = datasets.map((ds, i) => {
       // Find the sorted position of this dataset
       const sortedIndex = sortedDatasets.findIndex(sd => sd.originalIndex === i);
-      const col = dynamicPalette[sortedIndex % dynamicPalette.length];
+      const col = fixedPalette[sortedIndex % fixedPalette.length];
       const y = ds.data.slice(startIndex);
       return {
         name: ds.label,
@@ -1111,9 +1295,23 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
         showSymbol: false,
         data: y,
         lineStyle: { 
-          width: 12
+          width: 12,
+          color: col
         },
         itemStyle: { color: col },
+        areaStyle: {
+          color: {
+            type: 'linear',
+            x: 0,
+            y: 0,
+            x2: 0,
+            y2: 1,
+            colorStops: [
+              { offset: 0, color: `${col}40` }, // 25% opacity at top
+              { offset: 1, color: `${col}10` }  // 6% opacity at bottom
+            ]
+          }
+        },
         emphasis: {
           lineStyle: { width: 5 }
         },
@@ -1150,23 +1348,23 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
         symbol: 'circle',
         symbolSize: 16,
         itemStyle: {
-          color: '#000000' // Fixed black circle
+          color: '#FFFFFF' // Fixed white circle
         },
         label: {
           show: true,
           position: 'top',
           formatter: `{text|${maxValue.toFixed(1)}}`,
-          color: '#FFFFFF',
+          color: '#000000',
           fontSize: 24,
           fontWeight: 'bold',
-          backgroundColor: '#000000',
-          borderColor: '#000000',
+          backgroundColor: '#FFFFFF',
+          borderColor: '#FFFFFF',
           borderWidth: 0,
           borderRadius: 8,
           padding: [6, 12],
           rich: {
             text: {
-              color: '#FFFFFF',
+              color: '#000000',
               fontWeight: 'bold',
               fontSize: 24
             }
@@ -1201,19 +1399,19 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
       },
       tooltip: {
         trigger: 'axis',
-        backgroundColor: 'rgba(255, 255, 255, 0.9)',
+        backgroundColor: 'rgba(0, 0, 0, 0.9)',
         borderWidth: 0,
         padding: [8, 12],
-        textStyle: { fontSize: 12 },
+        textStyle: { fontSize: 12, color: '#FFFFFF' },
         formatter: (params: any) => {
           const d = params[0].axisValueLabel;
           const lines = params.map((p: any) =>
-            `<div style="display:flex;gap:6px;align-items:center;margin:1px 0;font-size:11px">
+            `<div style="display:flex;gap:6px;align-items:center;margin:1px 0;font-size:11px;color:#FFFFFF">
                <span style="width:6px;height:6px;border-radius:999px;background:${p.color}"></span>
                <span>${p.seriesName}: <b>${p.data}</b></span>
              </div>`
           ).join('');
-          return `<div style="font-weight:600;margin-bottom:4px;font-size:12px">${d}</div>${lines}`;
+          return `<div style="font-weight:600;margin-bottom:4px;font-size:12px;color:#FFFFFF">${d}</div>${lines}`;
         }
       },
       series
@@ -1242,12 +1440,12 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
       smoothedLabels.push(labels[i]);
     }
 
-    // Generate dynamic palette based on user selection
-    const dynamicPalette = generateColorPalette(colorPalette, datasets.length);
+    // Use the same color palette as work pattern visualization
+    const fixedPalette = ['#4950c5', '#3d42a8', '#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899', '#f43f5e', '#ef4444', '#f97316'];
     
     // Build series with smoothed data
     const series = datasets.map((ds, i) => {
-      const col = dynamicPalette[i % dynamicPalette.length];
+      const col = fixedPalette[i % fixedPalette.length];
       const smoothedY = smoothData(ds.data);
       return {
         name: ds.label,
@@ -1258,9 +1456,23 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
         showSymbol: false,
         data: smoothedY,
         lineStyle: { 
-          width: 12
+          width: 12,
+          color: col
         },
         itemStyle: { color: col },
+        areaStyle: {
+          color: {
+            type: 'linear',
+            x: 0,
+            y: 0,
+            x2: 0,
+            y2: 1,
+            colorStops: [
+              { offset: 0, color: `${col}40` }, // 25% opacity at top
+              { offset: 1, color: `${col}10` }  // 6% opacity at bottom
+            ]
+          }
+        },
         emphasis: {
           lineStyle: { width: 5 }
         },
@@ -1297,23 +1509,23 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
         symbol: 'circle',
         symbolSize: 16,
         itemStyle: {
-          color: '#000000' // Fixed black circle
+          color: '#FFFFFF' // Fixed white circle
         },
         label: {
           show: true,
           position: 'top',
           formatter: `{text|${maxValue.toFixed(1)}}`,
-          color: '#FFFFFF',
+          color: '#000000',
           fontSize: 24,
           fontWeight: 'bold',
-          backgroundColor: '#000000',
-          borderColor: '#000000',
+          backgroundColor: '#FFFFFF',
+          borderColor: '#FFFFFF',
           borderWidth: 0,
           borderRadius: 8,
           padding: [6, 12],
           rich: {
             text: {
-              color: '#FFFFFF',
+              color: '#000000',
               fontWeight: 'bold',
               fontSize: 24
             }
@@ -1349,19 +1561,19 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
       },
       tooltip: {
         trigger: 'axis',
-        backgroundColor: 'rgba(255, 255, 255, 0.9)',
+        backgroundColor: 'rgba(0, 0, 0, 0.9)',
         borderWidth: 0,
         padding: [8, 12],
-        textStyle: { fontSize: 12 },
+        textStyle: { fontSize: 12, color: '#FFFFFF' },
         formatter: (params: any) => {
           const d = params[0].axisValueLabel;
           const lines = params.map((p: any) =>
-            `<div style="display:flex;gap:6px;align-items:center;margin:1px 0;font-size:11px">
+            `<div style="display:flex;gap:6px;align-items:center;margin:1px 0;font-size:11px;color:#FFFFFF">
                <span style="width:6px;height:6px;border-radius:999px;background:${p.color}"></span>
                <span>${p.seriesName}: <b>${p.data}</b></span>
              </div>`
           ).join('');
-          return `<div style="font-weight:600;margin-bottom:4px;font-size:12px">${d}</div>${lines}`;
+          return `<div style="font-weight:600;margin-bottom:4px;font-size:12px;color:#FFFFFF">${d}</div>${lines}`;
         }
       },
       series
@@ -1434,22 +1646,14 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
 
     return (
       <div className="monthly-overview-widget">
-        <img 
-          src="/assets/logo.png" 
-          alt="Logo" 
-          width={72} 
-          height={72}
-          className="opacity-80 absolute top-0 right-4 z-10"
-          crossOrigin="anonymous"
-        />
         <div className="pl-8 pr-8">
-          <div className="text-3xl text-black font-medium">All Time Overview</div>
+          <div className="text-3xl text-gray-400 font-medium">All Time Overview</div>
           
           <div className="mt-0 flex items-end gap-2">
-            <div className="text-8xl font-bold">
+            <div className="text-8xl font-black" style={{ fontWeight: '900' }}>
               {allTimeStats ? allTimeStats.totalHours : '—'}
             </div>
-            <div className="text-4xl font-medium ml-2">
+            <div className="text-3xl font-medium ml-2">
               hr
             </div>
           </div>
@@ -1472,22 +1676,14 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
 
   const MonthlyOverviewWidget = () => (
     <div className="monthly-overview-widget">
-      <img 
-        src="/assets/logo.png" 
-        alt="Logo" 
-        width={72} 
-        height={72}
-        className="opacity-80 absolute top-0 right-4 z-10"
-        crossOrigin="anonymous"
-      />
       <div className="pl-8 pr-8">
-        <div className="text-3xl text-black font-medium">{new Date().toLocaleString('en-US', { month: 'long' })} Overview</div>
+        <div className="text-3xl text-gray-400 font-medium">{new Date().toLocaleString('en-US', { month: 'long' })} Overview</div>
         
         <div className="mt-0 flex items-end gap-2">
-          <div className="text-8xl font-bold">
+          <div className="text-8xl font-black" style={{ fontWeight: '900' }}>
             {summaryStats ? summaryStats.totalHours : '—'}
           </div>
-          <div className="text-4xl font-medium ml-2">
+          <div className="text-3xl font-medium ml-2">
             hr
           </div>
         </div>
@@ -1535,6 +1731,30 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
     </div>
   );
 
+  const ExecutionAnalysisWidget = () => (
+    <div className="execution-analysis-widget">
+      <div className="pl-8 pr-8">
+        {csvRows.length && columnNames ? (
+          <div className="text-white leading-tight font-bold" style={{ fontSize: '1.75rem' }}>
+            <DoitExecutionSummaryParagraph
+              rows={csvRows}
+              dateCol={columnNames.dateCol}
+              catCol={columnNames.catCol}
+              hoursCol={columnNames.valCol}
+              execCol="Execute"
+              colors={['#4950c5', '#3d42a8', '#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899', '#f43f5e', '#ef4444', '#f97316']}
+            />
+          </div>
+        ) : (
+          <div className="text-white text-center">
+            <div className="text-xl font-medium mb-2">No data available</div>
+            <div className="text-sm opacity-75">Upload CSV data to see your execution analysis</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key.toLowerCase() === 's' && chartData) {
@@ -1550,27 +1770,25 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
   }, [chartData]);
 
   return (
-    <div className="min-h-screen bg-white text-black">
+    <div className="min-h-screen bg-[#f1f2f3] text-black">
       {/* Header */}
-      <header className="px-6 py-6">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
+      <header className="absolute top-8 left-4 lg:top-10 lg:left-8 xl:left-12 right-4 lg:right-8 xl:right-12 z-10 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
             <Image
               src="/assets/logo.png"
               alt="Logo"
-              width={40}
-              height={40}
-              className="opacity-90"
-            />
-            <span className="text-xl font-semibold text-black">Doit</span>
+            width={28}
+            height={28}
+            className="opacity-90 lg:w-8 lg:h-8"
+          />
+          <span className="text-base lg:text-lg font-normal text-black">doit.</span>
           </Link>
           <Link
             href="/"
-            className="text-gray-600 hover:text-black transition-colors text-sm font-medium"
+          className="bg-white text-[#4950c5] border-2 border-[#4950c5] px-6 py-2 rounded-xl font-medium text-sm hover:bg-[#4950c5] hover:text-white transition-colors duration-200"
           >
-            ← Back to Home
+          Back to Home
           </Link>
-        </div>
       </header>
 
       {isSquareScreen ? (
@@ -1588,7 +1806,7 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
                 />
                 <span className="text-xl font-semibold text-black">Doit</span>
               </div>
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-4 square-screen-download-buttons">
                 <button
                   onClick={() => downloadWidget('monthly')}
                   className="download-button"
@@ -1605,9 +1823,19 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
                   aria-label="Download All Time Overview"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V03a2 2 0 01-2 2z" />
                   </svg>
                   All Time
+                </button>
+                <button
+                  onClick={() => downloadWidget('execution-analysis')}
+                  className="download-button"
+                  aria-label="Download Execution Analysis"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  Execution Analysis
                 </button>
                 <button
                   onClick={toggleSquareScreen}
@@ -1641,6 +1869,9 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
                 <div className="square-screen-container" id="alltime-widget">
                   <AllTimeOverviewWidget />
                 </div>
+                <div className="square-screen-container" id="execution-analysis-widget">
+                  <ExecutionAnalysisWidget />
+                </div>
               </div>
             </div>
           </main>
@@ -1668,45 +1899,13 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
         </div>
       ) : (
         <>
-          <main className="max-w-7xl mx-auto px-6 py-8">
-            {/* Welcome Section */}
-            <div className="text-center mb-12">
-              <h1 className="text-4xl font-bold text-black mb-4">
-                Doit Dashboard
-              </h1>
-              <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-                Upload your CSV file to visualize your work patterns, track productivity, and gain insights into your work habits.
-              </p>
-            </div>
+          <main className="w-full px-4 lg:px-8 xl:px-12 pt-24 lg:pt-28 pb-8 h-[calc(100vh-80px)] overflow-hidden">
 
             {/* Controls Section */}
-            <div className="bg-gray-50 rounded-2xl p-8 mb-8">
-              <h2 className="text-xl font-semibold text-black mb-6">Upload & Configure</h2>
-              <div className="flex flex-wrap gap-4 items-center justify-center">
-                <div className="relative">
-                  <select 
-                    id="range"
-                    value={range}
-                    onChange={(e) => setRange(e.target.value)}
-                    className="bg-white text-black border-2 border-gray-300 rounded-xl px-4 py-3 pr-10 cursor-pointer min-w-[140px] appearance-none font-medium hover:border-gray-400 transition-colors"
-                  >
-                    <option value="all">All time</option>
-                    {availableMonths.map(month => (
-                      <option key={month.value} value={month.value}>
-                        {month.label}
-                      </option>
-                    ))}
-                  </select>
-                  <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
-                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </div>
-                </div>
-                
+            <div className="flex flex-wrap gap-6 items-center justify-center mb-16">
                 <label
                   htmlFor="file"
-                  className="bg-white text-black border-2 border-gray-300 rounded-xl px-6 py-3 cursor-pointer hover:bg-gray-50 hover:border-gray-400 transition-colors inline-block font-medium"
+                className="bg-white text-black border-2 border-[#4950c5] rounded-xl px-8 py-4 cursor-pointer hover:bg-[#4950c5] hover:text-white transition-colors inline-block font-medium"
                 >
                   {selectedFileName || 'Choose CSV File'}
                 </label>
@@ -1720,109 +1919,70 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
                 
                 <button
                   onClick={handleRender}
-                  className="bg-black text-white rounded-xl px-6 py-3 cursor-pointer hover:bg-gray-800 transition-colors font-medium"
+                className="bg-[#4950c5] text-white rounded-xl px-8 py-4 cursor-pointer hover:bg-[#3d42a8] transition-colors font-medium"
                 >
                   Generate Chart
                 </button>
-                {chartData && (
-                  <div className="flex items-center gap-3 bg-white rounded-xl px-4 py-3 border-2 border-gray-300">
-                    <span className="text-sm font-medium text-gray-700">Theme:</span>
-                    <select
-                      value={colorPalette}
-                      onChange={(e) => setColorPalette(e.target.value as 'colorful' | 'red' | 'green' | 'blue' | 'black' | 'white' | 'yellow' | 'orange' | 'purple')}
-                      className="px-2 py-1 border-0 rounded-lg text-sm bg-transparent font-medium focus:outline-none"
-                    >
-                      <option value="colorful">Colorful</option>
-                      <option value="red">Red</option>
-                      <option value="green">Green</option>
-                      <option value="blue">Blue</option>
-                      <option value="yellow">Yellow</option>
-                      <option value="orange">Orange</option>
-                      <option value="purple">Purple</option>
-                      <option value="black">Black</option>
-                      <option value="white">White</option>
-                    </select>
-                  </div>
-                )}
                 
                 {chartData && (
-                  <button
-                    onClick={toggleSquareScreen}
-                    className="bg-white text-black border-2 border-gray-300 rounded-xl px-4 py-3 cursor-pointer hover:bg-gray-50 hover:border-gray-400 transition-colors font-medium"
-                  >
-                    {isSquareScreen ? 'Exit Square Screen' : 'Square Screen'}
-                  </button>
+                    <button
+                      onClick={toggleSquareScreen}
+                  className="bg-white text-black border-2 border-[#4950c5] rounded-xl px-8 py-4 cursor-pointer hover:bg-[#4950c5] hover:text-white transition-colors font-medium"
+                    >
+                  {isSquareScreen ? 'Exit Widget' : 'Widget'}
+                    </button>
                 )}
-              </div>
             </div>
 
             {/* Chart Section */}
             {chartData ? (
-              <div className="space-y-8">
-                {/* Summary Stats */}
-                <div className="bg-gradient-to-r from-gray-50 to-gray-100 rounded-2xl p-8">
-                  <div className="text-center">
-                    <h3 className="text-2xl font-bold text-black mb-2">Monthly Overview</h3>
-                    <div className="flex items-center justify-center gap-4 mb-4">
-                      <div className="text-6xl font-bold text-black">
-                        {summaryStats ? summaryStats.totalHours : '—'}
+              <div className="grid grid-cols-1 lg:grid-cols-[2fr_3fr] xl:grid-cols-[2fr_3fr] gap-6 h-[calc(100%-120px)]">
+                 {/* Execution Analytics - Top Left */}
+                 {csvRows.length && columnNames && (
+                   <div className="bg-[#f1f2f3] p-2 h-full overflow-y-auto">
+                     <div className="text-6xl space-y-8">
+                       <DoitExecutionSummaryParagraph
+                         rows={csvRows}
+                         dateCol={columnNames.dateCol}
+                         catCol={columnNames.catCol}
+                         hoursCol={columnNames.valCol}
+                         execCol="Execute"
+                         colors={['#4950c5', '#3d42a8', '#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899', '#f43f5e', '#ef4444', '#f97316']}
+                       />
                       </div>
-                      <div className="text-2xl font-medium text-gray-600">hours</div>
-                      {summaryStats && (
-                        <span
-                          className={`text-sm font-semibold px-3 py-2 rounded-xl inline-flex items-center gap-1
-                            ${summaryStats.projectedDelta >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}
-                          aria-label="projected monthly change"
-                        >
-                          {summaryStats.projectedDelta >= 0 ? '▲' : '▼'}
-                          {Math.abs(summaryStats.projectedRate)}%
-                        </span>
-                      )}
                     </div>
-                    <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-                      {getSummaryText(summaryStats)}
-                    </p>
-                  </div>
-                </div>
+                 )}
 
-                {/* Execution Analytics */}
-                {execParagraph && (
-                  <div className="bg-white rounded-2xl p-8 border border-gray-200">
-                    <h3 className="text-xl font-semibold text-black mb-4">Execution Analytics</h3>
-                    <div className="bg-gray-50 rounded-xl p-6">
-                      <p className="text-gray-700 leading-relaxed text-sm">
-                        {execParagraph}
-                      </p>
+                {/* Insight Summary - Top Middle */}
+                <div className="bg-white rounded-2xl p-6 border border-gray-200" style={{ display: 'none' }}>
+                  <h3 className="text-lg font-bold text-black mb-4">Insight Summary</h3>
+                  <div className="h-full overflow-y-auto">
+                    <InsightSummaryApp analytics={insightAnalytics} rows={csvRows} />
                     </div>
                   </div>
-                )}
 
-                {/* Insight Summary */}
-                <div className="bg-white rounded-2xl p-8 border border-gray-200">
-                  <h3 className="text-xl font-semibold text-black mb-6">Insight Summary</h3>
-                  <InsightSummaryApp analytics={insightAnalytics} rows={csvRows} />
+                {/* Work Pattern Visualization - Top Right */}
+                <div className="h-full overflow-hidden">
+                  <WorkPatternVisualization />
                 </div>
 
-                {/* Work Pattern Visualization */}
-                <WorkPatternVisualization />
-
-                {/* Chart Visualization */}
-                <div className="bg-white rounded-2xl p-8 border border-gray-200">
-                  <h3 className="text-xl font-semibold text-black mb-6 text-center">Work Pattern Visualization</h3>
-                  <div className="chart-container" style={{ width: '100%', height: '400px' }}>
-                    {chartData && (
+                {/* Chart Visualization - Bottom Left (spans 2 columns) */}
+                <div className="bg-white rounded-2xl p-6 border border-gray-200 lg:col-span-2" style={{ display: 'none' }}>
+                  <h3 className="text-lg font-bold text-black mb-4">Activity Timeline</h3>
+                  <div className="h-full">
                       <ReactECharts
                         ref={chartRef}
                         option={getChartOption()}
                         style={{ width: '100%', height: '100%' }}
                       />
-                    )}
+                  </div>
                   </div>
                   
+                {/* Categories Legend - Bottom Right */}
                   {chartData && (
-                    <div className="mt-6">
-                      <h4 className="text-lg font-medium text-black mb-4 text-center">Categories</h4>
-                      <div className="flex flex-wrap gap-4 justify-center">
+                  <div className="bg-white rounded-2xl p-6 border border-gray-200" style={{ display: 'none' }}>
+                    <h4 className="text-lg font-bold text-black mb-4">Categories</h4>
+                    <div className="flex flex-col gap-3 h-full overflow-y-auto">
                         {chartData.datasets.map((ds, i) => {
                           const dynamicPalette = generateColorPalette(colorPalette, chartData.datasets.length);
                           // Sort datasets by total values (highest first) for color assignment
@@ -1836,7 +1996,7 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
                           return (
                             <button
                               key={ds.label}
-                              className="flex gap-3 items-center text-sm text-black hover:opacity-70 transition-opacity bg-gray-100 hover:bg-gray-200 px-4 py-2 rounded-xl font-medium"
+                            className="flex gap-3 items-center text-sm text-black hover:opacity-70 transition-opacity bg-gray-100 hover:bg-gray-200 px-4 py-3 rounded-xl font-medium"
                               onClick={() => handleLegendClick(ds.label)}
                             >
                               <span 
@@ -1850,17 +2010,16 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
                       </div>
                     </div>
                   )}
-                </div>
               </div>
             ) : (
-              <div className="bg-gray-50 rounded-2xl p-12 text-center">
-                <div className="w-16 h-16 bg-gray-200 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="bg-white border border-gray-200 rounded-2xl p-16 text-center">
+                <div className="w-20 h-20 bg-[#4950c5] rounded-full flex items-center justify-center mx-auto mb-8">
+                  <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                   </svg>
                 </div>
-                <h3 className="text-xl font-semibold text-black mb-2">No Data Yet</h3>
-                <p className="text-gray-600 mb-6">Upload a CSV file above to start visualizing your work patterns.</p>
+                <h3 className="text-2xl font-bold text-black mb-4">No Data Yet</h3>
+                <p className="text-lg text-black mb-8 leading-relaxed">Upload a CSV file above to start visualizing your work patterns.</p>
               </div>
             )}
           </main>
@@ -1950,24 +2109,24 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
         
         .square-screen-widgets-container {
           display: flex;
-          gap: 3rem;
+          gap: 2rem;
           align-items: center;
           justify-content: center;
+          flex-wrap: nowrap;
         }
         
         .square-screen-container {
           position: relative;
           width: 420px;
           height: 420px;
-          background: white;
-          border-radius: 24px;
+          background: black;
+          color: white;
           padding: 2rem 0 0 0;
           display: flex;
           flex-direction: column;
           justify-content: flex-start;
           box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
           overflow: hidden;
-          border: 1px solid #e5e7eb;
         }
         
              .monthly-overview-widget {
