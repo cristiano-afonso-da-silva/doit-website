@@ -127,6 +127,8 @@ type DoitExecutionSummaryParagraphProps = {
   hoursCol: string;
   execCol: string;
   colors?: string[];
+  variant?: 'dashboard' | 'widget';
+  theme?: 'light' | 'dark';
 };
 
 export default function DoitExecutionSummaryParagraph({ 
@@ -135,7 +137,9 @@ export default function DoitExecutionSummaryParagraph({
   catCol, 
   hoursCol, 
   execCol,
-  colors = ['#4950c5', '#3d42a8', '#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899', '#f43f5e', '#ef4444', '#f97316']
+  colors = ['#4950c5', '#3d42a8', '#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899', '#f43f5e', '#ef4444', '#f97316'],
+  variant = 'widget',
+  theme = 'dark'
 }: DoitExecutionSummaryParagraphProps) {
   const s = computeStats(rows, dateCol, catCol, hoursCol, execCol);
   
@@ -146,7 +150,7 @@ export default function DoitExecutionSummaryParagraph({
   const execTrend  = s.dEp === 0 ? 'flat' : (s.dEp > 0 ? `${s.dEp}% higher` : `${Math.abs(s.dEp)}% lower`);
 
   const paragraph =
-    `This month currently: **${s.mtdHours}h**, **${s.mtdExec}** executions; pace **${s.avgH}h/day**, **${s.avgE}/day**; projected **${s.projH}h**. Mix: **${mix}**.`;
+    `This month currently: **${s.mtdHours}h**, **${s.mtdExec}** executions; pace **${s.avgH}h/day**, **${s.avgE}/day**; projected **${s.projH}h**.\nMix: **${mix}**.`;
 
   // Function to get color for a category name
   const getCategoryColor = (categoryName: string) => {
@@ -154,29 +158,63 @@ export default function DoitExecutionSummaryParagraph({
     return categoryIndex !== -1 ? colors[categoryIndex % colors.length] : '#ffffff';
   };
 
-  return (
-    <div className="text-white leading-tight font-black">
-      <p className="leading-tight font-black">
-        {paragraph.split(/(\*\*.*?\*\*)/g).map((seg, i) => {
-          if (seg.startsWith('**') && seg.endsWith('**')) {
-            const content = seg.slice(2, -2);
-            // Check if this segment contains category names
-            let coloredContent = content;
-            s.focusTop.forEach(cat => {
-              if (content.includes(cat.k)) {
-                const color = getCategoryColor(cat.k);
-                coloredContent = coloredContent.replace(cat.k, `<span style="color: ${color}; font-weight: 900;">${cat.k}</span>`);
+  // Different styling based on variant
+  if (variant === 'dashboard') {
+    return (
+      <div className="text-black leading-tight font-black">
+        {paragraph.split('\n').map((line, lineIndex) => (
+          <p key={lineIndex} className="leading-tight font-black mb-2">
+            {line.split(/(\*\*.*?\*\*)/g).map((seg, i) => {
+              if (seg.startsWith('**') && seg.endsWith('**')) {
+                const content = seg.slice(2, -2);
+                // Check if this segment contains category names
+                let coloredContent = content;
+                s.focusTop.forEach(cat => {
+                  if (content.includes(cat.k)) {
+                    const color = getCategoryColor(cat.k);
+                    coloredContent = coloredContent.replace(cat.k, `<span style="color: ${color}; font-weight: 900;">${cat.k}</span>`);
+                  }
+                });
+                
+                return (
+                  <strong key={i} className="font-black text-black" style={{ fontWeight: '900' }} dangerouslySetInnerHTML={{ __html: coloredContent }} />
+                );
+              } else {
+                return <span key={i} className="font-semibold text-gray-600">{seg}</span>;
               }
-            });
-            
-            return (
-              <strong key={i} className="font-black text-white" style={{ fontWeight: '900' }} dangerouslySetInnerHTML={{ __html: coloredContent }} />
-            );
-          } else {
-            return <span key={i} className="font-semibold text-gray-400">{seg}</span>;
-          }
-        })}
-      </p>
+            })}
+          </p>
+        ))}
+      </div>
+    );
+  }
+
+  // Widget variant (default)
+  return (
+    <div className={`leading-tight font-black ${theme === 'light' ? 'text-black' : 'text-white'}`}>
+      {paragraph.split('\n').map((line, lineIndex) => (
+        <p key={lineIndex} className="leading-tight font-black mb-1">
+          {line.split(/(\*\*.*?\*\*)/g).map((seg, i) => {
+            if (seg.startsWith('**') && seg.endsWith('**')) {
+              const content = seg.slice(2, -2);
+              // Check if this segment contains category names
+              let coloredContent = content;
+              s.focusTop.forEach(cat => {
+                if (content.includes(cat.k)) {
+                  const color = getCategoryColor(cat.k);
+                  coloredContent = coloredContent.replace(cat.k, `<span style="color: ${color}; font-weight: 900;">${cat.k}</span>`);
+                }
+              });
+              
+              return (
+                <strong key={i} className={`font-black ${theme === 'light' ? 'text-black' : 'text-white'}`} style={{ fontWeight: '900' }} dangerouslySetInnerHTML={{ __html: coloredContent }} />
+              );
+            } else {
+              return <span key={i} className={`font-semibold ${theme === 'light' ? 'text-gray-600' : 'text-gray-400'}`}>{seg}</span>;
+            }
+          })}
+        </p>
+      ))}
     </div>
   );
 }

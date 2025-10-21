@@ -3,11 +3,15 @@
 import { useEffect, useRef, useState } from 'react';
 import ReactECharts from 'echarts-for-react';
 import Papa from 'papaparse';
-import Link from 'next/link';
 import Image from 'next/image';
-import InsightSummaryApp, { computeExecAnalytics, Analytics } from '../../components/InsightSummaryApp';
-import DoitExecutionSummaryCard from '../../components/DoitExecutionSummaryCard';
-import DoitExecutionSummaryParagraph from '../../components/DoitExecutionSummaryParagraph';
+import DashboardUpload from '../../components/DashboardUpload';
+import DashboardAnalytics from '../../components/DashboardAnalytics';
+import DashboardWidgets from '../../components/DashboardWidgets';
+import { ProtectedRoute } from '../../components/ProtectedRoute';
+import { UserMenu } from '../../components/UserMenu';
+import { AuthModal } from '../../components/AuthModal';
+import { useAuth } from '../../contexts/AuthContext';
+import { DataService } from '../../services/dataService';
 
 
 // Dynamic palette will be generated based on user selection
@@ -320,22 +324,20 @@ function buildObjectiveParagraph(a: ReturnType<typeof computeExecAnalytics>): st
   );
 }
 
-export default function WorkLog() {
+function DashboardContent() {
+  const { user } = useAuth();
   const chartRef = useRef<ReactECharts>(null);
   const [chartData, setChartData] = useState<ChartData | null>(null);
   const [summaryStats, setSummaryStats] = useState<SummaryStats | null>(null);
-  const [execAnalytics, setExecAnalytics] = useState<ReturnType<typeof computeExecAnalytics> | null>(null);
-  const [execParagraph, setExecParagraph] = useState<string>('');
-  const [insightAnalytics, setInsightAnalytics] = useState<Analytics | null>(null);
   const [csvRows, setCsvRows] = useState<Record<string, any>[]>([]);
   const [status, setStatus] = useState<string>('');
-  const [range, setRange] = useState<string>('all');
-  const [fileInput, setFileInput] = useState<File | null>(null);
   const [selectedFileName, setSelectedFileName] = useState<string>('');
+  const [fileInput, setFileInput] = useState<File | null>(null);
   const [isSquareScreen, setIsSquareScreen] = useState(false);
-  const [availableMonths, setAvailableMonths] = useState<Array<{value: string, label: string}>>([]);
-  const [colorPalette, setColorPalette] = useState<'colorful' | 'red' | 'green' | 'blue' | 'black' | 'white' | 'yellow' | 'orange' | 'purple'>('colorful');
   const [columnNames, setColumnNames] = useState<{dateCol: string, catCol: string, valCol: string} | null>(null);
+  const [activeTab, setActiveTab] = useState<'upload' | 'analytics' | 'widget'>('upload');
+  const [savedDatasets, setSavedDatasets] = useState<any[]>([]);
+  const [currentDatasetId, setCurrentDatasetId] = useState<string | null>(null);
 
   // Color palette generation functions
   const generateColorPalette = (baseColor: string, count: number): string[] => {
@@ -569,6 +571,147 @@ export default function WorkLog() {
     if (!file) return;
     setFileInput(file);
     setSelectedFileName(file.name);
+    
+    // Automatically process the file immediately
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (results) => {
+        const parsedRows = results.data as CSVRow[];
+        if (!parsedRows || parsedRows.length === 0) {
+          return;
+        }
+        
+        const headers = results.meta.fields || Object.keys(parsedRows[0]);
+        const { dateCol, catCol, valCol } = guessColumns(headers);
+        const data = aggregateDaily(parsedRows, dateCol, catCol, valCol);
+        const stats = calculateSummaryStats(parsedRows, dateCol, catCol, valCol);
+        const months = getAvailableMonths(parsedRows, dateCol);
+        
+        // Compute execution analytics
+        const analytics = computeExecAnalytics(parsedRows, dateCol, catCol, valCol);
+        const paragraph = buildObjectiveParagraph(analytics);
+        
+        // Compute insight analytics using the new function
+        const insightData = computeExecAnalytics(parsedRows, dateCol, catCol, valCol);
+        
+        setChartData(data);
+        setSummaryStats(stats);
+        setCsvRows(parsedRows);
+        setColumnNames({ dateCol, catCol, valCol });
+      },
+      error: () => {
+        // Silent error handling
+      }
+    });
+  };
+
+  const deleteRow = (rowIndex: number) => {
+    const newRows = csvRows.filter((_, index) => index !== rowIndex);
+    setCsvRows(newRows);
+    
+    if (newRows.length > 0) {
+      const headers = Object.keys(newRows[0]);
+      const { dateCol, catCol, valCol } = guessColumns(headers);
+      const data = aggregateDaily(newRows, dateCol, catCol, valCol);
+      const stats = calculateSummaryStats(newRows, dateCol, catCol, valCol);
+      
+      setChartData(data);
+      setSummaryStats(stats);
+      setColumnNames({ dateCol, catCol, valCol });
+    } else {
+      setChartData(null);
+      setSummaryStats(null);
+      setColumnNames(null);
+    }
+  };
+
+  // Load user datasets on component mount
+  useEffect(() => {
+    if (user) {
+      loadUserDatasets();
+    }
+  }, [user]);
+
+  const loadUserDatasets = async () => {
+    if (!user) return;
+    
+    try {
+      const { data, error } = await DataService.getUserDatasets(user.id);
+      if (error && error.code !== 'PGRST116') {
+        console.warn('Error loading datasets:', error);
+      } else {
+        setSavedDatasets(data || []);
+      }
+    } catch (error: any) {
+      if (error.code !== 'PGRST116') {
+        console.warn('Error loading datasets:', error);
+      }
+      setSavedDatasets([]);
+    }
+  };
+
+  const saveCurrentData = async (datasetName: string, description: string = '') => {
+    if (!user || !csvRows.length || !columnNames) return;
+
+    try {
+      const { data, error } = await DataService.createDataset(
+        user.id,
+        datasetName,
+        description,
+        columnNames,
+        csvRows
+      );
+
+      if (error) {
+        if (error.code === 'PGRST116') {
+          alert('Database tables not yet set up. Please run the SQL schema first.');
+        } else {
+          console.error('Error saving dataset:', error);
+          alert('Failed to save dataset. Please try again.');
+        }
+      } else {
+        alert('Dataset saved successfully!');
+        setCurrentDatasetId(data?.id || null);
+        loadUserDatasets();
+      }
+    } catch (error: any) {
+      if (error.code === 'PGRST116') {
+        alert('Database tables not yet set up. Please run the SQL schema first.');
+      } else {
+        console.error('Error saving dataset:', error);
+        alert('Failed to save dataset. Please try again.');
+      }
+    }
+  };
+
+  const loadDataset = async (datasetId: string) => {
+    if (!user) return;
+
+    try {
+      const { data: datasetRows, error } = await DataService.getDatasetRows(datasetId);
+      if (error) {
+        console.error('Error loading dataset:', error);
+        return;
+      }
+
+      if (datasetRows && datasetRows.length > 0) {
+        const rows = datasetRows.map(row => row.row_data);
+        const headers = Object.keys(rows[0]);
+        const { dateCol, catCol, valCol } = guessColumns(headers);
+        const data = aggregateDaily(rows, dateCol, catCol, valCol);
+        const stats = calculateSummaryStats(rows, dateCol, catCol, valCol);
+
+        setCsvRows(rows);
+        setChartData(data);
+        setSummaryStats(stats);
+        setColumnNames({ dateCol, catCol, valCol });
+        setCurrentDatasetId(datasetId);
+        setSelectedFileName(`Dataset ${datasetId}`);
+      }
+    } catch (error) {
+      console.error('Error loading dataset:', error);
+    }
   };
 
   const handleRender = () => {
@@ -604,10 +747,6 @@ export default function WorkLog() {
         
         setChartData(data);
         setSummaryStats(stats);
-        setAvailableMonths(months);
-        setExecAnalytics(analytics);
-        setExecParagraph(paragraph);
-        setInsightAnalytics(insightData);
         setCsvRows(parsedRows);
         setColumnNames({ dateCol, catCol, valCol });
         setStatus(`Parsed ${data.labels.length} days • ${data.datasets.length} categories`);
@@ -798,277 +937,8 @@ export default function WorkLog() {
   };
 
          // Work Pattern Visualization Component
-         const WorkPatternVisualization = () => {
-           const [selectedPeriod, setSelectedPeriod] = useState<string>('last30');
-           
-           if (!csvRows.length || !columnNames) return null;
 
-           // Generate available months from data
-           const getAvailableMonths = () => {
-             const { dateCol } = columnNames;
-             const months = new Set<string>();
-             
-             csvRows.forEach(row => {
-               try {
-                 const rowDate = new Date(String(row[dateCol] ?? ''));
-                 if (!isNaN(rowDate.getTime())) {
-                   const monthKey = `${rowDate.getFullYear()}-${String(rowDate.getMonth() + 1).padStart(2, '0')}`;
-                   const monthName = rowDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-                   months.add(`${monthKey}|${monthName}`);
-                 }
-               } catch (error) {
-                 console.warn('Error processing date:', row[dateCol]);
-               }
-             });
-             
-             return Array.from(months).sort().map(item => {
-               const [key, name] = item.split('|');
-               return { key, name };
-             });
-           };
-
-           // Generate work pattern data based on selected period
-           const generatePatternData = () => {
-             const { dateCol, catCol, valCol } = columnNames;
-             
-             // Get all unique categories from the CSV data
-             const categories = new Set<string>();
-             csvRows.forEach(row => {
-               const category = String(row[catCol] ?? 'Unknown').trim() || 'Unknown';
-               categories.add(category);
-             });
-
-             let dateRange: string[] = [];
-             let patternData: Record<string, number[]> = {};
-             
-             // Initialize pattern data for each category
-             categories.forEach(category => {
-               patternData[category] = [];
-             });
-
-             if (selectedPeriod === 'all') {
-               // All time - get all unique dates
-               const allDates = new Set<string>();
-               csvRows.forEach(row => {
-                 try {
-                   const rowDate = new Date(String(row[dateCol] ?? ''));
-                   if (!isNaN(rowDate.getTime())) {
-                     const dateKey = rowDate.toISOString().split('T')[0];
-                     allDates.add(dateKey);
-                   }
-                 } catch (error) {
-                   console.warn('Error processing date:', row[dateCol]);
-                 }
-               });
-               
-               dateRange = Array.from(allDates).sort();
-             } else if (selectedPeriod === 'last30') {
-               // Last 30 days
-               const now = new Date();
-               const daysBack = 30;
-               for (let i = 0; i < daysBack; i++) {
-                 const date = new Date(now.getTime() - (daysBack - 1 - i) * 86400000);
-                 dateRange.push(date.toISOString().split('T')[0]);
-               }
-    } else {
-               // Specific month
-               const [year, month] = selectedPeriod.split('-');
-               const startDate = new Date(parseInt(year), parseInt(month) - 1, 1);
-               const endDate = new Date(parseInt(year), parseInt(month), 0);
-               
-               const currentDate = new Date(startDate);
-               while (currentDate <= endDate) {
-                 dateRange.push(currentDate.toISOString().split('T')[0]);
-                 currentDate.setDate(currentDate.getDate() + 1);
-               }
-             }
-
-             // Initialize data for each day
-             dateRange.forEach(() => {
-               categories.forEach(category => {
-                 patternData[category].push(0);
-               });
-             });
-
-             // Fill in actual data
-             dateRange.forEach((dateKey, dayIndex) => {
-               csvRows.forEach(row => {
-                 try {
-                   const rowDate = new Date(String(row[dateCol] ?? ''));
-                   const rowDateKey = rowDate.toISOString().split('T')[0];
-                   
-                   if (rowDateKey === dateKey) {
-                     const category = String(row[catCol] ?? 'Unknown').trim() || 'Unknown';
-                     const hours = parseFloat(String(row[valCol] ?? '0')) || 0;
-                     
-                     if (patternData[category]) {
-                       patternData[category][dayIndex] += hours;
-                     }
-                   }
-                 } catch (error) {
-                   console.warn('Error processing row:', row, error);
-                 }
-               });
-             });
-
-             return { patternData, dates: dateRange };
-           };
-
-           const { patternData, dates } = generatePatternData();
-           const availableMonths = getAvailableMonths();
-           
-           // Fixed color palette matching widget style
-           const fixedColors = ['#4950c5', '#3d42a8', '#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899', '#f43f5e', '#ef4444', '#f97316'];
-           
-           // Prepare ECharts data
-           const series = Object.entries(patternData).map(([category, values], index) => ({
-             name: category,
-             type: 'line',
-             data: values,
-             smooth: true,
-             symbol: 'none',
-             lineStyle: {
-               width: 4,
-               color: fixedColors[index % fixedColors.length]
-             },
-             itemStyle: {
-               color: fixedColors[index % fixedColors.length]
-             },
-             areaStyle: {
-               color: {
-                 type: 'linear',
-                 x: 0,
-                 y: 0,
-                 x2: 0,
-                 y2: 1,
-                 colorStops: [
-                   {
-                     offset: 0,
-                     color: `${fixedColors[index % fixedColors.length]}40` // 25% opacity
-                   },
-                   {
-                     offset: 1,
-                     color: `${fixedColors[index % fixedColors.length]}10` // 6% opacity
-                   }
-                 ]
-               }
-             }
-           }));
-
-           const workPatternChartOption = {
-             tooltip: {
-               trigger: 'axis',
-               backgroundColor: 'rgba(255, 255, 255, 0.95)',
-               borderColor: '#e5e7eb',
-               textStyle: {
-                 color: '#374151'
-               }
-             },
-             legend: {
-               show: false
-             },
-             grid: {
-               left: 0,
-               right: 0,
-               bottom: '3%',
-               top: 0,
-               containLabel: false
-             },
-             xAxis: {
-               type: 'category',
-               data: dates,
-               axisLine: {
-                 show: false
-               },
-               axisTick: {
-                 show: false
-               },
-               axisLabel: {
-                 color: '#6b7280',
-                 fontSize: 10
-               }
-             },
-             yAxis: {
-               type: 'value',
-               axisLine: {
-                 show: false
-               },
-               axisTick: {
-                 show: false
-               },
-               axisLabel: {
-                 color: '#6b7280',
-                 fontSize: 10
-               },
-               splitLine: {
-                 show: false
-               }
-             },
-             series: series
-           };
-
-           const getPeriodLabel = () => {
-             if (selectedPeriod === 'all') return 'All Time';
-             if (selectedPeriod === 'last30') return 'Last 30 Days';
-             const month = availableMonths.find(m => m.key === selectedPeriod);
-             return month ? month.name : 'Custom Period';
-           };
-
-           return (
-             <div className="h-full flex flex-col">
-               {/* ECharts Chart */}
-               <div className="flex-1 flex flex-col">
-                 <div className="bg-[#f1f2f3] py-4 px-0 h-full flex flex-col" style={{ marginTop: '10%' }}>
-                   <div className="flex justify-end mb-3 px-4">
-                     <select
-                       value={selectedPeriod}
-                       onChange={(e) => setSelectedPeriod(e.target.value)}
-                       className="px-3 py-1 text-xs font-medium rounded-lg bg-white border border-gray-200 text-gray-700 cursor-pointer hover:bg-gray-50 transition-colors"
-                     >
-                       <option value="all">All Time</option>
-                       <option value="last30">Last 30 Days</option>
-                       {availableMonths.map(month => (
-                         <option key={month.key} value={month.key}>
-                           {month.name}
-                         </option>
-                       ))}
-                     </select>
-                   </div>
-                   
-                   <div className="flex-1 w-full min-h-0">
-                     <ReactECharts
-                       option={workPatternChartOption}
-                       style={{ width: '100%', height: '100%' }}
-                     />
-                   </div>
-
-                   {/* Legend - Right below the graph */}
-                   <div className="mt-3 flex-shrink-0">
-                     <div className="flex flex-wrap gap-3 justify-center items-center">
-                       {Object.entries(patternData).map(([category, values], index) => {
-                         const color = fixedColors[index % fixedColors.length];
-                         
-                         return (
-                           <div key={category} className="flex items-center gap-2">
-                             <div 
-                               className="w-3 h-3 rounded-full" 
-                               style={{ backgroundColor: color }}
-                             />
-                             <span className="text-xs font-medium text-gray-800">
-                               {category}
-                             </span>
-                           </div>
-                         );
-                       })}
-                     </div>
-                   </div>
-                 </div>
-               </div>
-             </div>
-           );
-  };
-
-  const downloadWidget = async (type: 'monthly' | 'alltime' | 'execution-analysis') => {
+  const downloadWidget = async (type: 'monthly' | 'alltime' | 'execution-analysis', theme: 'light' | 'dark' = 'dark') => {
     // Try multiple approaches
     const element = document.getElementById(`${type}-widget`);
     if (!element) return;
@@ -1118,12 +988,12 @@ export default function WorkLog() {
       
       const dataUrl = await domtoimage.toPng(element, {
         quality: 1.0,
-        bgcolor: 'black',
-        width: 1680,
-        height: 1680,
+        bgcolor: theme === 'light' ? '#e8e8e8' : 'black',
+        width: 840,
+        height: 840,
         style: {
-          backgroundColor: 'black',
-          transform: 'scale(4)',
+          backgroundColor: theme === 'light' ? '#e8e8e8' : 'black',
+          transform: 'scale(2)',
           transformOrigin: 'top left',
           width: '420px',
           height: '420px'
@@ -1180,12 +1050,13 @@ export default function WorkLog() {
 
       const canvas = await import('html2canvas').then(module => module.default);
       const dataURL = await canvas(element, {
-        background: 'black',
+        background: theme === 'light' ? '#e8e8e8' : 'black',
         logging: false,
-        width: 1680,
-        height: 1680,
+        width: 840,
+        height: 840,
         useCORS: true,
-        allowTaint: true
+        allowTaint: true,
+        scale: 2
       });
 
       if (downloadButtons) downloadButtons.style.display = 'flex';
@@ -1646,14 +1517,14 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
 
     return (
       <div className="monthly-overview-widget">
-        <div className="pl-8 pr-8">
-          <div className="text-3xl text-gray-400 font-medium">All Time Overview</div>
+        <div className="pl-6 pr-6">
+          <div className="text-2xl text-gray-400 font-medium">All Time Overview</div>
           
           <div className="mt-0 flex items-end gap-2">
-            <div className="text-8xl font-black" style={{ fontWeight: '900' }}>
+            <div className="text-6xl font-black" style={{ fontWeight: '900' }}>
               {allTimeStats ? allTimeStats.totalHours : '—'}
             </div>
-            <div className="text-3xl font-medium ml-2">
+            <div className="text-2xl font-medium ml-2">
               hr
             </div>
           </div>
@@ -1676,14 +1547,14 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
 
   const MonthlyOverviewWidget = () => (
     <div className="monthly-overview-widget">
-      <div className="pl-8 pr-8">
-        <div className="text-3xl text-gray-400 font-medium">{new Date().toLocaleString('en-US', { month: 'long' })} Overview</div>
+      <div className="pl-6 pr-6">
+        <div className="text-2xl text-gray-400 font-medium">{new Date().toLocaleString('en-US', { month: 'long' })} Overview</div>
         
         <div className="mt-0 flex items-end gap-2">
-          <div className="text-8xl font-black" style={{ fontWeight: '900' }}>
+          <div className="text-6xl font-black" style={{ fontWeight: '900' }}>
             {summaryStats ? summaryStats.totalHours : '—'}
           </div>
-          <div className="text-3xl font-medium ml-2">
+          <div className="text-2xl font-medium ml-2">
             hr
           </div>
         </div>
@@ -1733,9 +1604,9 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
 
   const ExecutionAnalysisWidget = () => (
     <div className="execution-analysis-widget">
-      <div className="pl-8 pr-8">
+      <div className="pl-6 pr-6">
         {csvRows.length && columnNames ? (
-          <div className="text-white leading-tight font-bold" style={{ fontSize: '1.75rem' }}>
+          <div className="text-white leading-tight font-bold" style={{ fontSize: '1.3rem' }}>
             <DoitExecutionSummaryParagraph
               rows={csvRows}
               dateCol={columnNames.dateCol}
@@ -1743,12 +1614,13 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
               hoursCol={columnNames.valCol}
               execCol="Execute"
               colors={['#4950c5', '#3d42a8', '#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899', '#f43f5e', '#ef4444', '#f97316']}
+              variant="widget"
             />
           </div>
         ) : (
           <div className="text-white text-center">
-            <div className="text-xl font-medium mb-2">No data available</div>
-            <div className="text-sm opacity-75">Upload CSV data to see your execution analysis</div>
+            <div className="text-lg font-medium mb-2">No data available</div>
+            <div className="text-xs opacity-75">Upload CSV data to see your execution analysis</div>
           </div>
         )}
       </div>
@@ -1770,10 +1642,10 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
   }, [chartData]);
 
   return (
-    <div className="min-h-screen bg-[#f1f2f3] text-black">
+    <div className="min-h-screen bg-[#f1f2f3] flex flex-col">
       {/* Header */}
-      <header className="absolute top-8 left-4 lg:top-10 lg:left-8 xl:left-12 right-4 lg:right-8 xl:right-12 z-10 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
+      <div className="absolute top-8 left-16 lg:top-10 lg:left-24 xl:left-32 z-10">
+        <div className="flex items-center gap-3">
             <Image
               src="/assets/logo.png"
               alt="Logo"
@@ -1782,29 +1654,123 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
             className="opacity-90 lg:w-8 lg:h-8"
           />
           <span className="text-base lg:text-lg font-normal text-black">doit.</span>
-          </Link>
-          <Link
-            href="/"
-          className="bg-white text-[#4950c5] border-2 border-[#4950c5] px-6 py-2 rounded-xl font-medium text-sm hover:bg-[#4950c5] hover:text-white transition-colors duration-200"
+        </div>
+      </div>
+
+      {/* User Menu and Dataset Management */}
+      <div className="absolute top-8 right-16 lg:top-10 lg:right-24 xl:right-32 z-10">
+        <div className="flex items-center gap-4">
+          {/* Save Dataset Button */}
+          {csvRows.length > 0 && (
+            <button
+              onClick={() => {
+                const name = prompt('Enter dataset name:');
+                const description = prompt('Enter description (optional):');
+                if (name) {
+                  saveCurrentData(name, description || '');
+                }
+              }}
+              className="px-4 py-2 bg-[#4950c5] text-white rounded-lg hover:bg-[#3d42a8] transition-colors text-sm font-medium"
+            >
+              Save Dataset
+            </button>
+          )}
+          
+          {/* User Menu */}
+          <UserMenu />
+        </div>
+      </div>
+
+      {/* Navigation Tabs - Center */}
+      <div className="absolute top-8 left-1/2 transform -translate-x-1/2 lg:top-10 z-10">
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => setActiveTab('upload')}
+            className={`px-6 py-3 rounded-full text-sm font-medium transition-colors ${
+              activeTab === 'upload'
+                ? 'bg-[#4950c5] text-white'
+                : 'bg-[#f1f2f3] text-black hover:bg-gray-200'
+            }`}
           >
-          Back to Home
-          </Link>
-      </header>
+            Table
+          </button>
+          <button
+            onClick={() => setActiveTab('analytics')}
+            className={`px-6 py-3 rounded-full text-sm font-medium transition-colors ${
+              activeTab === 'analytics'
+                ? 'bg-[#4950c5] text-white'
+                : 'bg-[#f1f2f3] text-black hover:bg-gray-200'
+            }`}
+          >
+            Analytics
+          </button>
+          <button
+            onClick={() => setActiveTab('widget')}
+            className={`px-6 py-3 rounded-full text-sm font-medium transition-colors ${
+              activeTab === 'widget'
+                ? 'bg-[#4950c5] text-white'
+                : 'bg-[#f1f2f3] text-black hover:bg-gray-200'
+            }`}
+          >
+            Widget
+          </button>
+        </div>
+      </div>
+
+
+      {/* Main Content */}
+      <main className="flex-1 w-full px-16 lg:px-24 xl:px-32 pt-24 lg:pt-28 pb-8">
+        {activeTab === 'upload' && (
+          <div className="h-[calc(100vh-200px)]">
+            <DashboardUpload
+              selectedFileName={selectedFileName}
+              handleFileUpload={handleFileUpload}
+              chartData={chartData}
+              setActiveTab={setActiveTab}
+              csvRows={csvRows}
+              columnNames={columnNames}
+              deleteRow={deleteRow}
+            />
+          </div>
+        )}
+
+        {activeTab === 'analytics' && (
+          <div className="h-[calc(100vh-200px)]">
+            <DashboardAnalytics
+              chartData={chartData}
+              csvRows={csvRows}
+              columnNames={columnNames}
+            />
+          </div>
+        )}
+
+        {activeTab === 'widget' && (
+          <div className="h-[calc(100vh-200px)]">
+            <DashboardWidgets
+              summaryStats={summaryStats}
+              chartData={chartData}
+              csvRows={csvRows}
+              columnNames={columnNames}
+              downloadWidget={downloadWidget}
+            />
+          </div>
+        )}
+      </main>
 
       {isSquareScreen ? (
         <div className="square-screen-background">
           {/* Header */}
           <header className="square-screen-header">
-            <div className="max-w-7xl mx-auto flex items-center justify-between">
+            <div className="w-full px-16 lg:px-24 xl:px-32 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <Image
                   src="/assets/logo.png"
                   alt="Logo"
-                  width={40}
-                  height={40}
-                  className="opacity-90"
+                  width={28}
+                  height={28}
+                  className="opacity-90 lg:w-8 lg:h-8"
                 />
-                <span className="text-xl font-semibold text-black">Doit</span>
+                <span className="text-base lg:text-lg font-normal text-black">doit.</span>
               </div>
               <div className="flex items-center gap-4 square-screen-download-buttons">
                 <button
@@ -1852,7 +1818,7 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
 
           {/* Main Content */}
           <main className="square-screen-content">
-            <div className="max-w-7xl mx-auto px-6 py-12">
+            <div className="w-full px-16 lg:px-24 xl:px-32 py-12">
               <div className="text-center mb-12">
                 <h1 className="text-4xl font-bold text-black mb-4">
                   Doit Widgets
@@ -1878,7 +1844,7 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
 
           {/* Footer */}
           <footer className="square-screen-footer">
-            <div className="max-w-7xl mx-auto px-6 py-4">
+            <div className="w-full px-16 lg:px-24 xl:px-32 py-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <Image
@@ -1897,134 +1863,7 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
             </div>
           </footer>
         </div>
-      ) : (
-        <>
-          <main className="w-full px-4 lg:px-8 xl:px-12 pt-24 lg:pt-28 pb-8 h-[calc(100vh-80px)] overflow-hidden">
-
-            {/* Controls Section */}
-            <div className="flex flex-wrap gap-6 items-center justify-center mb-16">
-                <label
-                  htmlFor="file"
-                className="bg-white text-black border-2 border-[#4950c5] rounded-xl px-8 py-4 cursor-pointer hover:bg-[#4950c5] hover:text-white transition-colors inline-block font-medium"
-                >
-                  {selectedFileName || 'Choose CSV File'}
-                </label>
-                <input
-                  id="file"
-                  type="file"
-                  accept=".csv"
-                  onChange={handleFileUpload}
-                  className="hidden"
-                />
-                
-                <button
-                  onClick={handleRender}
-                className="bg-[#4950c5] text-white rounded-xl px-8 py-4 cursor-pointer hover:bg-[#3d42a8] transition-colors font-medium"
-                >
-                  Generate Chart
-                </button>
-                
-                {chartData && (
-                    <button
-                      onClick={toggleSquareScreen}
-                  className="bg-white text-black border-2 border-[#4950c5] rounded-xl px-8 py-4 cursor-pointer hover:bg-[#4950c5] hover:text-white transition-colors font-medium"
-                    >
-                  {isSquareScreen ? 'Exit Widget' : 'Widget'}
-                    </button>
-                )}
-            </div>
-
-            {/* Chart Section */}
-            {chartData ? (
-              <div className="grid grid-cols-1 lg:grid-cols-[2fr_3fr] xl:grid-cols-[2fr_3fr] gap-6 h-[calc(100%-120px)]">
-                 {/* Execution Analytics - Top Left */}
-                 {csvRows.length && columnNames && (
-                   <div className="bg-[#f1f2f3] p-2 h-full overflow-y-auto">
-                     <div className="text-6xl space-y-8">
-                       <DoitExecutionSummaryParagraph
-                         rows={csvRows}
-                         dateCol={columnNames.dateCol}
-                         catCol={columnNames.catCol}
-                         hoursCol={columnNames.valCol}
-                         execCol="Execute"
-                         colors={['#4950c5', '#3d42a8', '#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899', '#f43f5e', '#ef4444', '#f97316']}
-                       />
-                      </div>
-                    </div>
-                 )}
-
-                {/* Insight Summary - Top Middle */}
-                <div className="bg-white rounded-2xl p-6 border border-gray-200" style={{ display: 'none' }}>
-                  <h3 className="text-lg font-bold text-black mb-4">Insight Summary</h3>
-                  <div className="h-full overflow-y-auto">
-                    <InsightSummaryApp analytics={insightAnalytics} rows={csvRows} />
-                    </div>
-                  </div>
-
-                {/* Work Pattern Visualization - Top Right */}
-                <div className="h-full overflow-hidden">
-                  <WorkPatternVisualization />
-                </div>
-
-                {/* Chart Visualization - Bottom Left (spans 2 columns) */}
-                <div className="bg-white rounded-2xl p-6 border border-gray-200 lg:col-span-2" style={{ display: 'none' }}>
-                  <h3 className="text-lg font-bold text-black mb-4">Activity Timeline</h3>
-                  <div className="h-full">
-                      <ReactECharts
-                        ref={chartRef}
-                        option={getChartOption()}
-                        style={{ width: '100%', height: '100%' }}
-                      />
-                  </div>
-                  </div>
-                  
-                {/* Categories Legend - Bottom Right */}
-                  {chartData && (
-                  <div className="bg-white rounded-2xl p-6 border border-gray-200" style={{ display: 'none' }}>
-                    <h4 className="text-lg font-bold text-black mb-4">Categories</h4>
-                    <div className="flex flex-col gap-3 h-full overflow-y-auto">
-                        {chartData.datasets.map((ds, i) => {
-                          const dynamicPalette = generateColorPalette(colorPalette, chartData.datasets.length);
-                          // Sort datasets by total values (highest first) for color assignment
-                          const sortedDatasets = [...chartData.datasets].map((ds, i) => ({
-                            ...ds,
-                            originalIndex: i,
-                            total: ds.data.reduce((sum, val) => sum + val, 0)
-                          })).sort((a, b) => b.total - a.total);
-                          const sortedIndex = sortedDatasets.findIndex(sd => sd.originalIndex === i);
-                          const color = dynamicPalette[sortedIndex % dynamicPalette.length];
-                          return (
-                            <button
-                              key={ds.label}
-                            className="flex gap-3 items-center text-sm text-black hover:opacity-70 transition-opacity bg-gray-100 hover:bg-gray-200 px-4 py-3 rounded-xl font-medium"
-                              onClick={() => handleLegendClick(ds.label)}
-                            >
-                              <span 
-                                className="w-3 h-3 rounded-full" 
-                                style={{ backgroundColor: color }}
-                              />
-                              {ds.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-              </div>
-            ) : (
-              <div className="bg-white border border-gray-200 rounded-2xl p-16 text-center">
-                <div className="w-20 h-20 bg-[#4950c5] rounded-full flex items-center justify-center mx-auto mb-8">
-                  <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                  </svg>
-                </div>
-                <h3 className="text-2xl font-bold text-black mb-4">No Data Yet</h3>
-                <p className="text-lg text-black mb-8 leading-relaxed">Upload a CSV file above to start visualizing your work patterns.</p>
-              </div>
-            )}
-          </main>
-        </>
-      )}
+      ) : null}
 
       <style jsx global>{`
         .echarts-tooltip-p {
@@ -2050,7 +1889,6 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
         
         .square-screen-header {
           padding: 24px 0;
-          border-bottom: 1px solid #e5e7eb;
         }
         
         .square-screen-content {
@@ -2117,11 +1955,11 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
         
         .square-screen-container {
           position: relative;
-          width: 420px;
-          height: 420px;
+          width: 320px;
+          height: 320px;
           background: black;
           color: white;
-          padding: 2rem 0 0 0;
+          padding: 1.5rem 0 0 0;
           display: flex;
           flex-direction: column;
           justify-content: flex-start;
@@ -2147,5 +1985,13 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
              }
       `}</style>
     </div>
+  );
+}
+
+export default function Dashboard() {
+  return (
+    <ProtectedRoute>
+      <DashboardContent />
+    </ProtectedRoute>
   );
 }
