@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "../contexts/AuthContext";
+import PasswordGate from "../components/PasswordGate";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -14,7 +15,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Doit Visualizer",
+  title: "doit.",
   description: "Transform your CSV work logs into beautiful, interactive visualizations. Track your productivity, analyze patterns, and gain insights into your work habits.",
 };
 
@@ -29,7 +30,9 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <AuthProvider>
-          {children}
+          <PasswordGate>
+            {children}
+          </PasswordGate>
         </AuthProvider>
       </body>
     </html>
