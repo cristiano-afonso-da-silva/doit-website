@@ -12,8 +12,6 @@ export default function WorkPatternVisualization({ csvRows, columnNames }: WorkP
   const [selectedPeriod, setSelectedPeriod] = useState<string>('last30');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  
-  if (!csvRows.length || !columnNames) return null;
 
   // Handle clicks outside dropdown
   useEffect(() => {
@@ -28,6 +26,8 @@ export default function WorkPatternVisualization({ csvRows, columnNames }: WorkP
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, []);
+  
+  if (!csvRows.length || !columnNames) return null;
 
   // Generate available months from data
   const getAvailableMonths = () => {
@@ -43,7 +43,7 @@ export default function WorkPatternVisualization({ csvRows, columnNames }: WorkP
           months.add(`${monthKey}|${monthName}`);
         }
       } catch (error) {
-        console.warn('Error processing date:', row[dateCol]);
+        // Error processing date
       }
     });
     
@@ -65,7 +65,7 @@ export default function WorkPatternVisualization({ csvRows, columnNames }: WorkP
     });
 
     let dateRange: string[] = [];
-    let patternData: Record<string, number[]> = {};
+    const patternData: Record<string, number[]> = {};
     
     // Initialize pattern data for each category
     categories.forEach(category => {
@@ -83,7 +83,7 @@ export default function WorkPatternVisualization({ csvRows, columnNames }: WorkP
             allDates.add(dateKey);
           }
         } catch (error) {
-          console.warn('Error processing date:', row[dateCol]);
+          // Error processing date
         }
       });
       
@@ -91,6 +91,8 @@ export default function WorkPatternVisualization({ csvRows, columnNames }: WorkP
     } else if (selectedPeriod === 'last30') {
       // Last 30 days
       const now = new Date();
+      // Set to start of today to avoid timezone issues
+      now.setHours(0, 0, 0, 0);
       const daysBack = 30;
       for (let i = 0; i < daysBack; i++) {
         const date = new Date(now.getTime() - (daysBack - 1 - i) * 86400000);
@@ -132,7 +134,7 @@ export default function WorkPatternVisualization({ csvRows, columnNames }: WorkP
             }
           }
         } catch (error) {
-          console.warn('Error processing row:', row, error);
+          // Error processing row
         }
       });
     });
@@ -261,7 +263,7 @@ export default function WorkPatternVisualization({ csvRows, columnNames }: WorkP
         <div className="relative" ref={dropdownRef}>
           <button
             onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-            className="px-6 py-3 rounded-lg text-sm font-medium bg-[#f1f2f3] text-black hover:bg-gray-200 transition-colors cursor-pointer border-0 outline-none flex items-center gap-2"
+            className="px-6 py-3 rounded-full text-sm font-medium bg-[#f1f2f3] text-black hover:bg-gray-200 transition-colors cursor-pointer border-0 outline-none flex items-center gap-2"
           >
             <span>{getPeriodLabel()}</span>
             <svg 
@@ -281,7 +283,7 @@ export default function WorkPatternVisualization({ csvRows, columnNames }: WorkP
                   setSelectedPeriod('all');
                   setIsDropdownOpen(false);
                 }}
-                className={`w-full text-left px-4 py-2 text-sm font-medium hover:bg-gray-100 transition-colors ${
+                className={`w-full text-left px-4 py-2 text-sm font-medium rounded-full hover:bg-gray-100 transition-colors ${
                   selectedPeriod === 'all' ? 'bg-gray-100 text-black' : 'text-gray-700'
                 }`}
               >
@@ -292,7 +294,7 @@ export default function WorkPatternVisualization({ csvRows, columnNames }: WorkP
                   setSelectedPeriod('last30');
                   setIsDropdownOpen(false);
                 }}
-                className={`w-full text-left px-4 py-2 text-sm font-medium hover:bg-gray-100 transition-colors ${
+                className={`w-full text-left px-4 py-2 text-sm font-medium rounded-full hover:bg-gray-100 transition-colors ${
                   selectedPeriod === 'last30' ? 'bg-gray-100 text-black' : 'text-gray-700'
                 }`}
               >
@@ -305,7 +307,7 @@ export default function WorkPatternVisualization({ csvRows, columnNames }: WorkP
                     setSelectedPeriod(month.key);
                     setIsDropdownOpen(false);
                   }}
-                  className={`w-full text-left px-4 py-2 text-sm font-medium hover:bg-gray-100 transition-colors ${
+                  className={`w-full text-left px-4 py-2 text-sm font-medium rounded-full hover:bg-gray-100 transition-colors ${
                     selectedPeriod === month.key ? 'bg-gray-100 text-black' : 'text-gray-700'
                   }`}
                 >

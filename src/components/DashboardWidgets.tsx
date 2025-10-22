@@ -61,7 +61,7 @@ export default function DashboardWidgets({
       {chartData && (
         <div className="flex-1" style={{ width: '100%', height: 'calc(100% - 20px)' }}>
           <ReactECharts
-            option={getWidgetChartOption()}
+            option={getMonthlyChartOption()}
             style={{ width: '100%', height: '100%' }}
           />
         </div>
@@ -149,6 +149,149 @@ export default function DashboardWidgets({
       </div>
     </div>
   );
+
+  const getMonthlyChartOption = () => {
+    if (!chartData) return {};
+
+    const { labels, datasets } = chartData;
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth();
+
+    const targetDate = new Date(currentYear, currentMonth, 1);
+    const nextMonth = new Date(currentYear, currentMonth + 1, 1);
+    
+    // Find the start and end indices for current month data
+    const foundIndex = labels.findIndex(label => {
+      const labelDate = new Date(label);
+      return labelDate >= targetDate && labelDate < nextMonth;
+    });
+    
+    const endIndex = labels.findIndex(label => {
+      const labelDate = new Date(label);
+      return labelDate >= nextMonth;
+    });
+    
+    // If no data found for current month, return empty chart
+    if (foundIndex === -1) {
+      return {
+        backgroundColor: 'transparent',
+        animation: false,
+        animationDuration: 0,
+        animationEasing: 'linear',
+        grid: { left: 0, right: 0, top: 60, bottom: 2 },
+        xAxis: {
+          type: 'category',
+          data: [],
+          boundaryGap: false,
+          axisLine: { show: false },
+          axisLabel: { show: false },
+          axisTick: { show: false },
+          splitLine: { show: false },
+        },
+        yAxis: {
+          type: 'value',
+          min: 0,
+          axisLine: { show: false },
+          axisLabel: { show: false },
+          axisTick: { show: false },
+          splitLine: { show: false },
+        },
+        tooltip: {
+          show: false
+        },
+        series: []
+      };
+    }
+    
+    const startIndex = foundIndex;
+    const endIdx = endIndex !== -1 ? endIndex : labels.length;
+    const monthlyLabels = labels.slice(startIndex, endIdx);
+
+    const smoothData = (data: number[], windowSize: number = 5) => {
+      const smoothed = [];
+      for (let i = 0; i < data.length; i += windowSize) {
+        const window = data.slice(i, i + windowSize);
+        const average = window.reduce((sum, val) => sum + val, 0) / window.length;
+        smoothed.push(average);
+      }
+      return smoothed;
+    };
+
+    const smoothedLabels = [];
+    for (let i = 0; i < monthlyLabels.length; i += 5) {
+      smoothedLabels.push(monthlyLabels[i]);
+    }
+
+    const fixedPalette = ['#4950c5', '#3d42a8', '#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899', '#f43f5e', '#ef4444', '#f97316'];
+    
+    const series = datasets.map((ds, i) => {
+      const col = fixedPalette[i % fixedPalette.length];
+      const monthlyData = ds.data.slice(startIndex, endIdx);
+      const smoothedY = smoothData(monthlyData);
+      return {
+        name: ds.label,
+        type: 'line',
+        smooth: 0.5,
+        symbol: 'circle',
+        symbolSize: 4,
+        showSymbol: false,
+        data: smoothedY,
+        lineStyle: { 
+          width: 16,
+          color: col
+        },
+        itemStyle: { color: col },
+        areaStyle: {
+          color: {
+            type: 'linear',
+            x: 0,
+            y: 0,
+            x2: 0,
+            y2: 1,
+            colorStops: [
+              { offset: 0, color: `${col}40` },
+              { offset: 1, color: `${col}10` }
+            ]
+          }
+        },
+        emphasis: {
+          disabled: true
+        },
+        animationDuration: 0,
+        animationEasing: 'linear'
+      };
+    });
+
+    return {
+      backgroundColor: 'transparent',
+      animation: false,
+      animationDuration: 0,
+      animationEasing: 'linear',
+      grid: { left: 0, right: 0, top: 60, bottom: 2 },
+      xAxis: {
+        type: 'category',
+        data: smoothedLabels,
+        boundaryGap: false,
+        axisLine: { show: false },
+        axisLabel: { show: false },
+        axisTick: { show: false },
+        splitLine: { show: false },
+      },
+      yAxis: {
+        type: 'value',
+        min: 0,
+        axisLine: { show: false },
+        axisLabel: { show: false },
+        axisTick: { show: false },
+        splitLine: { show: false },
+      },
+      tooltip: {
+        show: false
+      },
+      series
+    };
+  };
 
   const getWidgetChartOption = () => {
     if (!chartData) return {};
@@ -257,7 +400,7 @@ export default function DashboardWidgets({
           color: theme === 'light' ? '#000000' : '#FFFFFF'
         },
         label: {
-          show: true,
+          show: false,
           position: 'top',
           formatter: `{text|${maxValue.toFixed(1)}}`,
           color: theme === 'light' ? '#FFFFFF' : '#000000',
@@ -304,6 +447,7 @@ export default function DashboardWidgets({
         splitLine: { show: false },
       },
       tooltip: {
+        show: false,
         trigger: 'axis',
         backgroundColor: theme === 'light' ? 'white' : 'rgba(0, 0, 0, 0.9)',
         borderWidth: 1,
@@ -378,10 +522,10 @@ export default function DashboardWidgets({
           }
         },
         emphasis: {
-          lineStyle: { width: 5 }
+          disabled: true
         },
-        animationDuration: 1000,
-        animationEasing: 'cubicOut'
+        animationDuration: 0,
+        animationEasing: 'linear'
       };
     });
 
@@ -401,49 +545,13 @@ export default function DashboardWidgets({
       });
     });
 
-    // Add highest value indicator as a scatter series
-    if (maxIndex !== -1) {
-      const indicatorData = new Array(smoothedLabels.length).fill(null);
-      indicatorData[maxIndex] = maxValue;
-      
-      (series as any[]).push({
-        name: 'Highest Value',
-        type: 'scatter',
-        data: indicatorData,
-        symbol: 'circle',
-        symbolSize: 16,
-        itemStyle: {
-          color: theme === 'light' ? '#000000' : '#FFFFFF'
-        },
-        label: {
-          show: true,
-          position: 'top',
-          formatter: `{text|${maxValue.toFixed(1)}}`,
-          color: theme === 'light' ? '#FFFFFF' : '#000000',
-          fontSize: 24,
-          fontWeight: 'bold',
-          backgroundColor: theme === 'light' ? '#000000' : '#FFFFFF',
-          borderColor: theme === 'light' ? '#000000' : '#FFFFFF',
-          borderWidth: 0,
-          borderRadius: 8,
-          padding: [6, 12],
-          rich: {
-            text: {
-              color: theme === 'light' ? '#FFFFFF' : '#000000',
-              fontWeight: 'bold',
-              fontSize: 24
-            }
-          }
-        },
-        z: 10
-      });
-    }
+    // Removed highest value indicator scatter series for static widget
 
     return {
       backgroundColor: 'transparent',
-      animation: true,
-      animationDuration: 1000,
-      animationEasing: 'cubicOut',
+      animation: false,
+      animationDuration: 0,
+      animationEasing: 'linear',
       grid: { left: 0, right: 0, top: 60, bottom: 2 },
       xAxis: {
         type: 'category',
@@ -463,6 +571,7 @@ export default function DashboardWidgets({
         splitLine: { show: false },
       },
       tooltip: {
+        show: false,
         trigger: 'axis',
         backgroundColor: theme === 'light' ? 'white' : 'rgba(0, 0, 0, 0.9)',
         borderWidth: 1,
@@ -503,7 +612,7 @@ export default function DashboardWidgets({
               className="square-screen-container" 
               id="monthly-widget"
               style={{
-                backgroundColor: theme === 'light' ? '#e8e8e8' : 'black',
+                backgroundColor: theme === 'light' ? '#e8e8e8' : '#121212',
                 color: theme === 'light' ? 'black' : 'white',
                 position: 'relative',
                 width: '420px',
@@ -523,7 +632,7 @@ export default function DashboardWidgets({
               className="square-screen-container" 
               id="alltime-widget"
               style={{
-                backgroundColor: theme === 'light' ? '#e8e8e8' : 'black',
+                backgroundColor: theme === 'light' ? '#e8e8e8' : '#121212',
                 color: theme === 'light' ? 'black' : 'white',
                 position: 'relative',
                 width: '420px',
@@ -543,7 +652,7 @@ export default function DashboardWidgets({
               className="square-screen-container" 
               id="execution-analysis-widget"
               style={{
-                backgroundColor: theme === 'light' ? '#e8e8e8' : 'black',
+                backgroundColor: theme === 'light' ? '#e8e8e8' : '#121212',
                 color: theme === 'light' ? 'black' : 'white',
                 position: 'relative',
                 width: '420px',

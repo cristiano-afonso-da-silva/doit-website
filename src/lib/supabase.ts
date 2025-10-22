@@ -5,34 +5,3 @@ const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYm
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
-// Database types
-export interface UserDataset {
-  id: string
-  user_id: string
-  name: string
-  description?: string
-  created_at: string
-  updated_at: string
-  column_mapping: {
-    dateCol: string
-    catCol: string
-    valCol: string
-  }
-  total_rows: number
-}
-
-export interface DataRow {
-  id: string
-  dataset_id: string
-  row_data: Record<string, any>
-  created_at: string
-}
-
-export interface UserPreferences {
-  id: string
-  user_id: string
-  theme: 'light' | 'dark'
-  default_view: 'upload' | 'analytics' | 'widget'
-  created_at: string
-  updated_at: string
-}

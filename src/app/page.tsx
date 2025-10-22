@@ -2,23 +2,28 @@
 
 import Link from 'next/link';
 import Image from 'next/image';
+import { useRouter } from 'next/navigation';
+import { useAuth } from '../contexts/AuthContext';
+import DynamicHeader from '../components/DynamicHeader';
 
 export default function LandingPage() {
-    return (
+  const { user } = useAuth();
+  const router = useRouter();
+
+  const handleVisualizeNow = () => {
+    if (user) {
+      // User is signed in, go directly to dashboard
+      router.push('/dashboard');
+    } else {
+      // User is not signed in, go to sign in page
+      router.push('/auth/signin');
+    }
+  };
+
+  return (
     <div className="min-h-screen bg-[#f1f2f3] flex flex-col">
-      {/* Brand Name - Top Left */}
-      <div className="absolute top-8 left-16 lg:top-10 lg:left-24 xl:left-32 z-10">
-        <div className="flex items-center gap-3">
-          <Image
-            src="/assets/logo.png" 
-            alt="Logo" 
-            width={28}
-            height={28}
-            className="opacity-90 lg:w-8 lg:h-8"
-          />
-          <span className="text-base lg:text-lg font-normal text-black">doit.</span>
-        </div>
-      </div>
+      {/* Dynamic Header */}
+      <DynamicHeader />
 
       {/* Main Content - Centered */}
       <main className="flex-1 flex items-center justify-center">
@@ -30,16 +35,16 @@ export default function LandingPage() {
             </h1>
             
             <p className="text-lg lg:text-xl text-black mb-12 leading-relaxed">
-              Doit turns your work logs into clear, visual insights — helping you see where your time goes and how you're growing.
+              Doit turns your work logs into clear, visual insights — helping you see where your time goes and how you&apos;re growing.
             </p>
 
             <div className="flex justify-start">
-              <Link
-                href="/dashboard"
-                className="bg-[#4950c5] text-white px-8 py-4 rounded-xl font-medium text-lg hover:bg-[#3d42a8] transition-colors duration-200"
+              <button
+                onClick={handleVisualizeNow}
+                className="bg-[#4950c5] text-white px-8 py-4 rounded-full font-medium text-lg hover:bg-[#3d42a8] transition-colors duration-200"
               >
                 Visualize Now
-              </Link>
+              </button>
             </div>
           </div>
 

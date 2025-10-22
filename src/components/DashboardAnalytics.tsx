@@ -1,8 +1,7 @@
 'use client';
 
 import React from 'react';
-import DoitExecutionSummaryParagraph from './DoitExecutionSummaryParagraph';
-import WorkPatternVisualization from './WorkPatternVisualization';
+import ComprehensiveAnalytics from './ComprehensiveAnalytics';
 
 interface DashboardAnalyticsProps {
   chartData: any;
@@ -23,7 +22,7 @@ export default function DashboardAnalytics({ chartData, csvRows, columnNames }: 
                 </svg>
               </div>
               <h3 className="text-2xl font-bold text-black mb-4">No Data Available</h3>
-              <p className="text-lg text-black mb-8">Upload a CSV file in the Upload tab to start analyzing your data.</p>
+              <p className="text-lg text-black mb-8">Add work logs to start analyzing your data.</p>
             </div>
           </div>
         </div>
@@ -31,32 +30,21 @@ export default function DashboardAnalytics({ chartData, csvRows, columnNames }: 
     );
   }
 
+  // Transform csvRows to work logs format
+  const workLogs = csvRows.map(row => ({
+    date: String(row[columnNames?.dateCol || 'date'] || ''),
+    project: String(row[columnNames?.catCol || 'project'] || ''),
+    hours: Number(row[columnNames?.valCol || 'hours'] || 0),
+    execute: String(row['Execute'] || row['execute'] || '')
+  }));
+
   return (
     <div className="h-full">
-      {/* Main Analytics Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-[2fr_3fr] gap-8 h-full">
-        {/* Execution Analytics - Left */}
-        {csvRows.length && columnNames && (
-          <div className="bg-[#f1f2f3] h-full overflow-y-auto rounded-2xl">
-            <div className="text-6xl space-y-8">
-              <DoitExecutionSummaryParagraph
-                rows={csvRows}
-                dateCol={columnNames.dateCol}
-                catCol={columnNames.catCol}
-                hoursCol={columnNames.valCol}
-                execCol="Execute"
-                colors={['#4950c5', '#3d42a8', '#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899', '#f43f5e', '#ef4444', '#f97316']}
-                variant="dashboard"
-              />
-             </div>
-           </div>
-        )}
-
-        {/* Work Pattern Visualization - Right */}
-        <div className="bg-white rounded-2xl h-full overflow-hidden">
-          <WorkPatternVisualization csvRows={csvRows} columnNames={columnNames} />
-        </div>
-      </div>
+      <ComprehensiveAnalytics 
+        workLogs={workLogs} 
+        csvRows={csvRows} 
+        columnNames={columnNames} 
+      />
     </div>
   );
 }

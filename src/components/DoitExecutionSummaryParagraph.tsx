@@ -38,8 +38,8 @@ function computeStats(rows: Row[], dateCol: string, catCol: string, hoursCol: st
   // Aggregate
   for (const r of rows) {
     const d = parseDate(r[dateCol]); if (!d) continue;
-    first = !first || d < first ? d : first;
-    last  = !last  || d > last  ? d : last;
+    if (!first || d < first) first = d;
+    if (!last || d > last) last = d;
 
     const dk = dayKey(d), mk = monKey(d);
     const cat = (r[catCol] ?? 'Unknown').toString().trim() || 'Unknown';

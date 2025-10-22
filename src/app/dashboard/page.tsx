@@ -1,17 +1,17 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import ReactECharts from 'echarts-for-react';
 import Papa from 'papaparse';
+import Link from 'next/link';
 import Image from 'next/image';
 import DashboardUpload from '../../components/DashboardUpload';
 import DashboardAnalytics from '../../components/DashboardAnalytics';
 import DashboardWidgets from '../../components/DashboardWidgets';
-import { ProtectedRoute } from '../../components/ProtectedRoute';
-import { UserMenu } from '../../components/UserMenu';
-import { AuthModal } from '../../components/AuthModal';
-import { useAuth } from '../../contexts/AuthContext';
-import { DataService } from '../../services/dataService';
+import ProtectedRoute from '../../components/ProtectedRoute';
+import DashboardHeader from '../../components/DashboardHeader';
+import DoitExecutionSummaryParagraph from '../../components/DoitExecutionSummaryParagraph';
+import { useWorkLogs, type WorkLog } from '../../hooks/useWorkLogs';
 
 
 // Dynamic palette will be generated based on user selection
@@ -102,8 +102,8 @@ function computeExecAnalytics(
     const monthKey = toMonthKey(d);
     if (!dayKey || !monthKey) continue;
 
-    firstDate = !firstDate || d < firstDate ? d : firstDate;
-    lastDate = !lastDate || d > lastDate ? d : lastDate;
+    if (!firstDate || d < firstDate) firstDate = d;
+    if (!lastDate || d > lastDate) lastDate = d;
 
     const p = String(r[projectCol] ?? 'Unknown').trim() || 'Unknown';
     const h = num(r[hoursCol]);
@@ -324,20 +324,54 @@ function buildObjectiveParagraph(a: ReturnType<typeof computeExecAnalytics>): st
   );
 }
 
-function DashboardContent() {
-  const { user } = useAuth();
+export default function WorkLog() {
   const chartRef = useRef<ReactECharts>(null);
+  const { workLogs, loading: workLogsLoading, fetchWorkLogs } = useWorkLogs();
   const [chartData, setChartData] = useState<ChartData | null>(null);
   const [summaryStats, setSummaryStats] = useState<SummaryStats | null>(null);
   const [csvRows, setCsvRows] = useState<Record<string, any>[]>([]);
   const [status, setStatus] = useState<string>('');
   const [selectedFileName, setSelectedFileName] = useState<string>('');
   const [fileInput, setFileInput] = useState<File | null>(null);
-  const [isSquareScreen, setIsSquareScreen] = useState(false);
   const [columnNames, setColumnNames] = useState<{dateCol: string, catCol: string, valCol: string} | null>(null);
   const [activeTab, setActiveTab] = useState<'upload' | 'analytics' | 'widget'>('upload');
-  const [savedDatasets, setSavedDatasets] = useState<any[]>([]);
-  const [currentDatasetId, setCurrentDatasetId] = useState<string | null>(null);
+  const [range, setRange] = useState<string>('all');
+  const [colorPalette, setColorPalette] = useState<string>('default');
+
+  // Convert work logs to CSV format for analytics
+  const convertWorkLogsToCSV = (workLogs: WorkLog[]) => {
+    return workLogs.map(log => ({
+      Date: log.date,
+      Project: log.project,
+      Hours: log.hours,
+      Execute: log.execute || ''
+    }));
+  };
+
+  // Process work logs data when workLogs change
+  useEffect(() => {
+    if (workLogs.length > 0) {
+      const csvData = convertWorkLogsToCSV(workLogs);
+      setCsvRows(csvData);
+      setColumnNames({ dateCol: 'Date', catCol: 'Project', valCol: 'Hours' });
+      
+      // Process the data for charts and analytics
+      const data = aggregateDaily(csvData, 'Date', 'Project', 'Hours');
+      const stats = calculateSummaryStats(csvData, 'Date', 'Project', 'Hours');
+      
+      setChartData(data);
+      setSummaryStats(stats);
+      setStatus(`Loaded ${workLogs.length} work logs`);
+    } else {
+      setCsvRows([]);
+      setColumnNames(null);
+      setChartData(null);
+      setSummaryStats(null);
+      setStatus('No work logs found');
+    }
+  }, [workLogs]);
+
+  // Note: Data refresh is now handled by the useWorkLogs hook automatically
 
   // Color palette generation functions
   const generateColorPalette = (baseColor: string, count: number): string[] => {
@@ -626,94 +660,6 @@ function DashboardContent() {
     }
   };
 
-  // Load user datasets on component mount
-  useEffect(() => {
-    if (user) {
-      loadUserDatasets();
-    }
-  }, [user]);
-
-  const loadUserDatasets = async () => {
-    if (!user) return;
-    
-    try {
-      const { data, error } = await DataService.getUserDatasets(user.id);
-      if (error && error.code !== 'PGRST116') {
-        console.warn('Error loading datasets:', error);
-      } else {
-        setSavedDatasets(data || []);
-      }
-    } catch (error: any) {
-      if (error.code !== 'PGRST116') {
-        console.warn('Error loading datasets:', error);
-      }
-      setSavedDatasets([]);
-    }
-  };
-
-  const saveCurrentData = async (datasetName: string, description: string = '') => {
-    if (!user || !csvRows.length || !columnNames) return;
-
-    try {
-      const { data, error } = await DataService.createDataset(
-        user.id,
-        datasetName,
-        description,
-        columnNames,
-        csvRows
-      );
-
-      if (error) {
-        if (error.code === 'PGRST116') {
-          alert('Database tables not yet set up. Please run the SQL schema first.');
-        } else {
-          console.error('Error saving dataset:', error);
-          alert('Failed to save dataset. Please try again.');
-        }
-      } else {
-        alert('Dataset saved successfully!');
-        setCurrentDatasetId(data?.id || null);
-        loadUserDatasets();
-      }
-    } catch (error: any) {
-      if (error.code === 'PGRST116') {
-        alert('Database tables not yet set up. Please run the SQL schema first.');
-      } else {
-        console.error('Error saving dataset:', error);
-        alert('Failed to save dataset. Please try again.');
-      }
-    }
-  };
-
-  const loadDataset = async (datasetId: string) => {
-    if (!user) return;
-
-    try {
-      const { data: datasetRows, error } = await DataService.getDatasetRows(datasetId);
-      if (error) {
-        console.error('Error loading dataset:', error);
-        return;
-      }
-
-      if (datasetRows && datasetRows.length > 0) {
-        const rows = datasetRows.map(row => row.row_data);
-        const headers = Object.keys(rows[0]);
-        const { dateCol, catCol, valCol } = guessColumns(headers);
-        const data = aggregateDaily(rows, dateCol, catCol, valCol);
-        const stats = calculateSummaryStats(rows, dateCol, catCol, valCol);
-
-        setCsvRows(rows);
-        setChartData(data);
-        setSummaryStats(stats);
-        setColumnNames({ dateCol, catCol, valCol });
-        setCurrentDatasetId(datasetId);
-        setSelectedFileName(`Dataset ${datasetId}`);
-      }
-    } catch (error) {
-      console.error('Error loading dataset:', error);
-    }
-  };
-
   const handleRender = () => {
     if (!fileInput) {
       setStatus('Pick a CSV');
@@ -908,9 +854,6 @@ function DashboardContent() {
   };
 
 
-  const toggleSquareScreen = () => {
-    setIsSquareScreen(!isSquareScreen);
-  };
 
   // Sparkline component for work pattern visualization
   const Sparkline: React.FC<{ values: number[]; height?: number; width?: number }> = ({ values, height = 32, width = 160 }) => {
@@ -959,9 +902,9 @@ function DashboardContent() {
 
     // Approach 2: Try a different canvas method
     try {
-      // Hide buttons temporarily
-      const downloadButtons = document.querySelector('.square-screen-download-buttons') as HTMLElement;
-      const closeButton = document.querySelector('.square-screen-close') as HTMLElement;
+      // Hide buttons temporarily (if they exist)
+      const downloadButtons = document.querySelector('.download-buttons') as HTMLElement;
+      const closeButton = document.querySelector('.close-button') as HTMLElement;
       
       if (downloadButtons) downloadButtons.style.display = 'none';
       if (closeButton) closeButton.style.display = 'none';
@@ -1001,8 +944,8 @@ function DashboardContent() {
         filter: (node: any) => {
           // Keep all elements except download buttons and close button
           if (node.classList && (
-            node.classList.contains('square-screen-download-buttons') ||
-            node.classList.contains('square-screen-close')
+            node.classList.contains('download-buttons') ||
+            node.classList.contains('close-button')
           )) {
             return false;
           }
@@ -1022,13 +965,13 @@ function DashboardContent() {
       
       return;
     } catch (error) {
-      console.log('dom-to-image failed, trying html2canvas...');
+      // dom-to-image failed, trying html2canvas
     }
 
     // Approach 3: Simplified html2canvas
     try {
-      const downloadButtons = document.querySelector('.square-screen-download-buttons') as HTMLElement;
-      const closeButton = document.querySelector('.square-screen-close') as HTMLElement;
+      const downloadButtons = document.querySelector('.download-buttons') as HTMLElement;
+      const closeButton = document.querySelector('.close-button') as HTMLElement;
       
       if (downloadButtons) downloadButtons.style.display = 'none';
       if (closeButton) closeButton.style.display = 'none';
@@ -1055,8 +998,7 @@ function DashboardContent() {
         width: 840,
         height: 840,
         useCORS: true,
-        allowTaint: true,
-        scale: 2
+        allowTaint: true
       });
 
       if (downloadButtons) downloadButtons.style.display = 'flex';
@@ -1069,12 +1011,12 @@ function DashboardContent() {
       
       return;
     } catch (error) {
-      console.log('html2canvas failed');
+      // html2canvas failed
     }
 
     // Approach 4: Manual instructions with visual guidance
-    const downloadButtons = document.querySelector('.square-screen-download-buttons') as HTMLElement;
-    const closeButton = document.querySelector('.square-screen-close') as HTMLElement;
+    const downloadButtons = document.querySelector('.download-buttons') as HTMLElement;
+    const closeButton = document.querySelector('.close-button') as HTMLElement;
     if (downloadButtons) downloadButtons.style.display = 'flex';
     if (closeButton) closeButton.style.display = 'flex';
 
@@ -1589,6 +1531,7 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
           return monthData.some(value => value > 0);
         });
 
+        return null;
       })()}
 
       {chartData && (
@@ -1627,62 +1570,15 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
     </div>
   );
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === 's' && chartData) {
-        toggleSquareScreen();
-      }
-    };
-
-    document.addEventListener('keydown', handleKeyDown);
-    
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [chartData]);
 
   return (
-    <div className="min-h-screen bg-[#f1f2f3] flex flex-col">
-      {/* Header */}
-      <div className="absolute top-8 left-16 lg:top-10 lg:left-24 xl:left-32 z-10">
-        <div className="flex items-center gap-3">
-            <Image
-              src="/assets/logo.png"
-              alt="Logo"
-            width={28}
-            height={28}
-            className="opacity-90 lg:w-8 lg:h-8"
-          />
-          <span className="text-base lg:text-lg font-normal text-black">doit.</span>
-        </div>
-      </div>
-
-      {/* User Menu and Dataset Management */}
-      <div className="absolute top-8 right-16 lg:top-10 lg:right-24 xl:right-32 z-10">
-        <div className="flex items-center gap-4">
-          {/* Save Dataset Button */}
-          {csvRows.length > 0 && (
-            <button
-              onClick={() => {
-                const name = prompt('Enter dataset name:');
-                const description = prompt('Enter description (optional):');
-                if (name) {
-                  saveCurrentData(name, description || '');
-                }
-              }}
-              className="px-4 py-2 bg-[#4950c5] text-white rounded-lg hover:bg-[#3d42a8] transition-colors text-sm font-medium"
-            >
-              Save Dataset
-            </button>
-          )}
-          
-          {/* User Menu */}
-          <UserMenu />
-        </div>
-      </div>
+    <ProtectedRoute>
+      <div className="min-h-screen bg-[#f1f2f3] flex flex-col">
+        {/* Dashboard Header */}
+        <DashboardHeader />
 
       {/* Navigation Tabs - Center */}
-      <div className="absolute top-8 left-1/2 transform -translate-x-1/2 lg:top-10 z-10">
+      <div className="absolute top-8 left-1/2 transform -translate-x-1/2 lg:top-10 z-30">
         <div className="flex items-center gap-4">
           <button
             onClick={() => setActiveTab('upload')}
@@ -1730,8 +1626,9 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
               csvRows={csvRows}
               columnNames={columnNames}
               deleteRow={deleteRow}
+              refreshWorkLogs={fetchWorkLogs}
             />
-          </div>
+        </div>
         )}
 
         {activeTab === 'analytics' && (
@@ -1757,113 +1654,6 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
         )}
       </main>
 
-      {isSquareScreen ? (
-        <div className="square-screen-background">
-          {/* Header */}
-          <header className="square-screen-header">
-            <div className="w-full px-16 lg:px-24 xl:px-32 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <Image
-                  src="/assets/logo.png"
-                  alt="Logo"
-                  width={28}
-                  height={28}
-                  className="opacity-90 lg:w-8 lg:h-8"
-                />
-                <span className="text-base lg:text-lg font-normal text-black">doit.</span>
-              </div>
-              <div className="flex items-center gap-4 square-screen-download-buttons">
-                <button
-                  onClick={() => downloadWidget('monthly')}
-                  className="download-button"
-                  aria-label="Download Monthly Overview"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                  Monthly
-                </button>
-                <button
-                  onClick={() => downloadWidget('alltime')}
-                  className="download-button"
-                  aria-label="Download All Time Overview"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V03a2 2 0 01-2 2z" />
-                  </svg>
-                  All Time
-                </button>
-                <button
-                  onClick={() => downloadWidget('execution-analysis')}
-                  className="download-button"
-                  aria-label="Download Execution Analysis"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                  Execution Analysis
-                </button>
-                <button
-                  onClick={toggleSquareScreen}
-                  className="square-screen-close"
-                  aria-label="Close square screen"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-          </header>
-
-          {/* Main Content */}
-          <main className="square-screen-content">
-            <div className="w-full px-16 lg:px-24 xl:px-32 py-12">
-              <div className="text-center mb-12">
-                <h1 className="text-4xl font-bold text-black mb-4">
-                  Doit Widgets
-                </h1>
-                <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-                  Download and share your work insights with beautiful, professional widgets.
-                </p>
-              </div>
-              
-              <div className="square-screen-widgets-container">
-                <div className="square-screen-container" id="monthly-widget">
-                  <MonthlyOverviewWidget />
-                </div>
-                <div className="square-screen-container" id="alltime-widget">
-                  <AllTimeOverviewWidget />
-                </div>
-                <div className="square-screen-container" id="execution-analysis-widget">
-                  <ExecutionAnalysisWidget />
-                </div>
-              </div>
-            </div>
-          </main>
-
-          {/* Footer */}
-          <footer className="square-screen-footer">
-            <div className="w-full px-16 lg:px-24 xl:px-32 py-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <Image
-                    src="/assets/logo.png"
-                    alt="Logo"
-                    width={24}
-                    height={24}
-                    className="opacity-70"
-                  />
-                  <span className="text-gray-600 text-sm">Doit Visualizer</span>
-                </div>
-                <p className="text-gray-500 text-sm">
-                  Press ESC or click the X to exit
-                </p>
-              </div>
-            </div>
-          </footer>
-        </div>
-      ) : null}
 
       <style jsx global>{`
         .echarts-tooltip-p {
@@ -1874,54 +1664,6 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
           box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25) !important;
         }
         
-        
-        .square-screen-background {
-          position: fixed;
-          top: 0;
-          left: 0;
-          width: 100vw;
-          height: 100vh;
-          background: white;
-          display: flex;
-          flex-direction: column;
-          z-index: 1000;
-        }
-        
-        .square-screen-header {
-          padding: 24px 0;
-        }
-        
-        .square-screen-content {
-          flex: 1;
-          display: flex;
-          flex-direction: column;
-          justify-content: center;
-        }
-        
-        .square-screen-footer {
-          padding: 24px 0;
-          border-top: 1px solid #e5e7eb;
-        }
-        
-        .square-screen-close {
-          background: white;
-          border: 2px solid #d1d5db;
-          border-radius: 12px;
-          width: 44px;
-          height: 44px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          cursor: pointer;
-          color: #374151;
-          transition: all 0.2s ease;
-        }
-        
-        .square-screen-close:hover {
-          background: #f9fafb;
-          border-color: #9ca3af;
-          transform: scale(1.05);
-        }
         
         .download-button {
           background: white;
@@ -1945,28 +1687,6 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
           box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
         }
         
-        .square-screen-widgets-container {
-          display: flex;
-          gap: 2rem;
-          align-items: center;
-          justify-content: center;
-          flex-wrap: nowrap;
-        }
-        
-        .square-screen-container {
-          position: relative;
-          width: 320px;
-          height: 320px;
-          background: black;
-          color: white;
-          padding: 1.5rem 0 0 0;
-          display: flex;
-          flex-direction: column;
-          justify-content: flex-start;
-          box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
-          overflow: hidden;
-        }
-        
              .monthly-overview-widget {
                position: relative;
                width: 100%;
@@ -1985,13 +1705,6 @@ The widget is now highlighted for 3 seconds to show you exactly what to save.`);
              }
       `}</style>
     </div>
-  );
-}
-
-export default function Dashboard() {
-  return (
-    <ProtectedRoute>
-      <DashboardContent />
     </ProtectedRoute>
   );
 }
