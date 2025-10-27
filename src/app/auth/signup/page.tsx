@@ -3,7 +3,6 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import Image from 'next/image';
 import { supabase } from '../../../lib/supabase';
 import DynamicHeader from '../../../components/DynamicHeader';
 
@@ -13,14 +12,12 @@ export default function SignUpPage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [message, setMessage] = useState('');
   const router = useRouter();
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError('');
-    setMessage('');
 
     if (password !== confirmPassword) {
       setError('Passwords do not match');
@@ -35,19 +32,40 @@ export default function SignUpPage() {
     }
 
     try {
-      const { data, error } = await supabase.auth.signUp({
+      // Store email and password BEFORE sending OTP
+      sessionStorage.setItem('pending_signup_email', email);
+      sessionStorage.setItem('pending_signup_password', password);
+
+      // Send OTP code to email (not magic link)
+      const { error: otpError } = await supabase.auth.signInWithOtp({
         email,
-        password,
+        options: {
+          shouldCreateUser: true,
+          // Force OTP instead of magic link
+          data: {
+            // Custom data to ensure OTP flow
+          },
+        },
       });
 
-      if (error) {
-        setError(error.message);
-      } else {
-        setMessage('Please check your email for a verification link');
+      if (otpError) {
+        console.error('OTP error:', otpError);
+        // Clean up session storage on error
+        sessionStorage.removeItem('pending_signup_email');
+        sessionStorage.removeItem('pending_signup_password');
+        setError(otpError.message);
+        setLoading(false);
+        return;
       }
+
+      // Redirect to verification page
+      router.push(`/auth/verify?email=${encodeURIComponent(email)}`);
     } catch (err) {
+      console.error('Sign up error:', err);
+      // Clean up session storage on error
+      sessionStorage.removeItem('pending_signup_email');
+      sessionStorage.removeItem('pending_signup_password');
       setError('An unexpected error occurred');
-    } finally {
       setLoading(false);
     }
   };
@@ -115,12 +133,6 @@ export default function SignUpPage() {
               {error && (
                 <div className="text-red-600 text-sm bg-red-50 p-3 rounded-lg">
                   {error}
-                </div>
-              )}
-
-              {message && (
-                <div className="text-green-600 text-sm bg-green-50 p-3 rounded-lg">
-                  {message}
                 </div>
               )}
 

@@ -1,5 +1,48 @@
 # Supabase Setup Instructions
 
+## Authentication Configuration
+
+### Email OTP Setup (REQUIRED)
+
+This application uses email-based OTP (One-Time Password) for user verification. The code uses Supabase's `resend` API to send 6-digit verification codes.
+
+#### IMPORTANT Supabase Configuration:
+
+1. **Go to your Supabase project dashboard**
+   - Navigate to: https://supabase.com/dashboard/project/YOUR_PROJECT_ID
+
+2. **Navigate to Authentication Settings**:
+   - Go to **Authentication** > **URL Configuration**
+   - Make sure your site URL is set correctly
+
+3. **Optional - Customize Email Template** (Authentication > Email Templates):
+   - Find the **"Confirm signup"** template
+   - This template will be used to send the OTP code
+   - You can customize the message, but make sure it includes the code
+   - Default template includes: `{{ .Token }}` or `{{ .ConfirmationCode }}`
+
+#### How it works (Code Implementation):
+
+1. **User signs up** → Creates account with email/password
+2. **App sends OTP** → Uses `supabase.auth.resend({ type: 'signup', email })` to send 6-digit code
+3. **User receives code** → Check email for 6-digit verification code
+4. **User enters code** → Types code on verification page
+5. **Code verified** → Uses `verifyOtp({ email, token, type: 'signup' })`
+6. **Success** → User logged in and redirected to dashboard
+
+#### Troubleshooting:
+
+**Receiving magic links instead of codes?**
+- Check that you're using `type: 'signup'` in the `resend` call
+- Check that you're using `type: 'signup'` in the `verifyOtp` call
+- The email template should contain the token variable
+
+**Not receiving any emails?**
+- Check spam/junk folder
+- Verify email provider settings in Supabase
+- Check Supabase logs for email delivery errors
+- Make sure your site URL is configured in Supabase settings
+
 ## Database Schema Setup
 
 To enable the work log functionality, you need to create the `work_logs` table in your Supabase database.

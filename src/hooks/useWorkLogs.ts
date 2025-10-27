@@ -13,15 +13,34 @@ export interface WorkLog {
   created_at: string;
 }
 
+// Shared data cache to prevent unnecessary refetches
+let workLogsCache: WorkLog[] = [];
+let cacheUserId: string | null = null;
+let cacheTimestamp: number = 0;
+const CACHE_DURATION = 60000; // 1 minute cache
+
 export function useWorkLogs() {
   const { user } = useAuth();
   const [workLogs, setWorkLogs] = useState<WorkLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const fetchWorkLogs = useCallback(async () => {
+  const fetchWorkLogs = useCallback(async (forceRefresh = false) => {
     if (!user) {
       setWorkLogs([]);
+      setLoading(false);
+      return;
+    }
+
+    // Check if we have valid cached data
+    const now = Date.now();
+    const isCacheValid = !forceRefresh && 
+                         cacheUserId === user.id && 
+                         workLogsCache.length > 0 &&
+                         (now - cacheTimestamp) < CACHE_DURATION;
+
+    if (isCacheValid) {
+      setWorkLogs(workLogsCache);
       setLoading(false);
       return;
     }
@@ -37,8 +56,14 @@ export function useWorkLogs() {
       if (error) {
         setError(error.message);
       } else {
-        setWorkLogs(data || []);
+        const fetchedData = data || [];
+        setWorkLogs(fetchedData);
         setError('');
+        
+        // Update cache
+        workLogsCache = fetchedData;
+        cacheUserId = user.id;
+        cacheTimestamp = Date.now();
       }
     } catch (err) {
       setError('Failed to fetch work logs');
@@ -67,7 +92,11 @@ export function useWorkLogs() {
         return { error: error.message };
       }
 
-      setWorkLogs(prev => [data, ...prev]);
+      // Update cache
+      workLogsCache = [data, ...workLogsCache];
+      cacheTimestamp = Date.now();
+      
+      setWorkLogs(workLogsCache);
       return { data };
     } catch (err) {
       return { error: 'Failed to add work log' };
@@ -88,7 +117,11 @@ export function useWorkLogs() {
         return { error: error.message };
       }
 
-      setWorkLogs(prev => prev.filter(log => log.id !== id));
+      // Update cache
+      workLogsCache = workLogsCache.filter(log => log.id !== id);
+      cacheTimestamp = Date.now();
+      
+      setWorkLogs(workLogsCache);
       return { success: true };
     } catch (err) {
       return { error: 'Failed to delete work log' };
@@ -111,16 +144,35 @@ export function useWorkLogs() {
         return { error: error.message };
       }
 
-      setWorkLogs(prev => prev.map(log => log.id === id ? data : log));
+      // Update cache
+      workLogsCache = workLogsCache.map(log => log.id === id ? data : log);
+      cacheTimestamp = Date.now();
+      
+      setWorkLogs(workLogsCache);
       return { data };
     } catch (err) {
       return { error: 'Failed to update work log' };
     }
   }, [user]);
 
+  // Only fetch on mount or when user changes
   useEffect(() => {
     fetchWorkLogs();
-  }, [fetchWorkLogs]);
+  }, [user?.id]); // Only depend on user.id, not the entire fetchWorkLogs function
+
+  // Sync with cache when it changes (from other instances of the hook)
+  useEffect(() => {
+    const syncInterval = setInterval(() => {
+      if (workLogsCache.length > 0 && cacheUserId === user?.id) {
+        // Check if cache is different from current state
+        if (JSON.stringify(workLogs) !== JSON.stringify(workLogsCache)) {
+          setWorkLogs([...workLogsCache]);
+        }
+      }
+    }, 100); // Check every 100ms
+
+    return () => clearInterval(syncInterval);
+  }, [workLogs, user?.id]);
 
   return {
     workLogs,

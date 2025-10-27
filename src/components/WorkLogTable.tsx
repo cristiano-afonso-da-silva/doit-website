@@ -1,27 +1,14 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { supabase } from '../lib/supabase';
-import { useAuth } from '../contexts/AuthContext';
-
-interface WorkLog {
-  id: string;
-  date: string;
-  project: string;
-  hours: number;
-  execute: string | null;
-  created_at: string;
-}
+import React, { useState } from 'react';
+import { useWorkLogs } from '../hooks/useWorkLogs';
 
 interface WorkLogTableProps {
   onWorkLogDeleted?: () => void;
 }
 
 export default function WorkLogTable({ onWorkLogDeleted }: WorkLogTableProps) {
-  const { user } = useAuth();
-  const [workLogs, setWorkLogs] = useState<WorkLog[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const { workLogs, loading, error, deleteWorkLog: deleteLog } = useWorkLogs();
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10; // Fixed at 10 entries per page
 
@@ -41,56 +28,15 @@ export default function WorkLogTable({ onWorkLogDeleted }: WorkLogTableProps) {
     setCurrentPage(Math.max(1, Math.min(page, totalPages)));
   };
 
-  const fetchWorkLogs = useCallback(async () => {
-    if (!user) return;
-
-    try {
-      setLoading(true);
-      const { data, error } = await supabase
-        .from('work_logs')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('date', { ascending: false });
-
-      if (error) {
-        setError(error.message);
-      } else {
-        setWorkLogs(data || []);
+  const handleDelete = async (id: string) => {
+    const result = await deleteLog(id);
+    if (result.success) {
+      // Notify parent component that a work log was deleted
+      if (onWorkLogDeleted) {
+        onWorkLogDeleted();
       }
-    } catch (err) {
-      setError('Failed to fetch work logs');
-    } finally {
-      setLoading(false);
-    }
-  }, [user]);
-
-  const deleteWorkLog = async (id: string) => {
-    if (!user) return;
-
-    try {
-      const { error } = await supabase
-        .from('work_logs')
-        .delete()
-        .eq('id', id)
-        .eq('user_id', user.id);
-
-      if (error) {
-        setError(error.message);
-      } else {
-        setWorkLogs(workLogs.filter(log => log.id !== id));
-        // Notify parent component that a work log was deleted
-        if (onWorkLogDeleted) {
-          onWorkLogDeleted();
-        }
-      }
-    } catch (err) {
-      setError('Failed to delete work log');
     }
   };
-
-  useEffect(() => {
-    fetchWorkLogs();
-  }, [user, fetchWorkLogs]);
 
   if (loading) {
     return (
@@ -107,12 +53,7 @@ export default function WorkLogTable({ onWorkLogDeleted }: WorkLogTableProps) {
       <div className="bg-white rounded-2xl p-6 border border-gray-200">
         <div className="text-center">
           <p className="text-red-600 mb-4">Error: {error}</p>
-          <button
-            onClick={fetchWorkLogs}
-            className="bg-[#4950c5] text-white px-4 py-2 rounded-lg hover:bg-[#3d42a8] transition-colors"
-          >
-            Try Again
-          </button>
+          <p className="text-sm text-gray-500">Please refresh the page to try again.</p>
         </div>
       </div>
     );
@@ -174,7 +115,7 @@ export default function WorkLogTable({ onWorkLogDeleted }: WorkLogTableProps) {
                       </td>
                       <td className="py-3 px-4">
                         <button
-                          onClick={() => deleteWorkLog(log.id)}
+                          onClick={() => handleDelete(log.id)}
                           className="text-red-600 hover:text-red-800 transition-colors"
                           title="Delete work log"
                         >

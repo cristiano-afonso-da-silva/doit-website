@@ -1,15 +1,14 @@
 'use client';
 
 import React, { useState } from 'react';
-import { supabase } from '../lib/supabase';
-import { useAuth } from '../contexts/AuthContext';
+import { useWorkLogs } from '../hooks/useWorkLogs';
 
 interface WorkLogEntryProps {
   onWorkLogAdded: () => void;
 }
 
 export default function WorkLogEntry({ onWorkLogAdded }: WorkLogEntryProps) {
-  const { user } = useAuth();
+  const { addWorkLog } = useWorkLogs();
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split('T')[0], // Today's date
     project: '',
@@ -21,24 +20,20 @@ export default function WorkLogEntry({ onWorkLogAdded }: WorkLogEntryProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user) return;
 
     setIsSubmitting(true);
     setMessage('');
 
     try {
-      const { error } = await supabase
-        .from('work_logs')
-        .insert({
-          user_id: user.id,
-          date: formData.date,
-          project: formData.project.trim(),
-          hours: parseFloat(formData.hours),
-          execute: formData.execute.trim()
-        });
+      const result = await addWorkLog({
+        date: formData.date,
+        project: formData.project.trim(),
+        hours: parseFloat(formData.hours),
+        execute: formData.execute.trim()
+      });
 
-      if (error) {
-        setMessage(`Error: ${error.message}`);
+      if (result.error) {
+        setMessage(`Error: ${result.error}`);
       } else {
         setMessage('Work log added successfully!');
         setFormData({
